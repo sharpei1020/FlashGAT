@@ -25,6 +25,9 @@ namespace dgl
       return size.x == 0 || size.y == 0 || size.z == 0;
     }
 
+#define CHECK_GE(x, y) CHECK((x) >= (y))
+#define CHECK_NE(x, y) CHECK((x) != (y))
+
 #define CUDA_DRIVER_CALL(x)                                           \
   {                                                                   \
     CUresult result = x;                                              \

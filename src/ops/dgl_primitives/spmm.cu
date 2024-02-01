@@ -7,7 +7,7 @@
 #include "functor.cuh"
 #include "spmm.cuh"
 #include <ATen/cuda/CUDAContext.h>
-#include <THC/THC.h>
+// #include <THC/THC.h>
 #include <cusparse_v2.h>
 #include <torch/torch.h>
 
@@ -390,17 +390,17 @@ torch::Tensor SpMMSrc(torch::Tensor features, std::vector<int64_t> dims,
 
 static auto registry =
     torch::RegisterOperators(
-        "my_ops::SpMMEdge(Tensor x, int[] dim, bool k, int? t, "
+        "my_ops::SpMMEdge(Tensor x, int[] dim, bool k, ScalarType? t, "
         "__torch__.torch.classes.my_classes.DGLGraph g) -> Tensor y",
         &SpMMEdge)
-        .op("my_ops::SpMMSrc(Tensor x, int[] dim, bool k, int? t, "
+        .op("my_ops::SpMMSrc(Tensor x, int[] dim, bool k, ScalarType? t, "
             "__torch__.torch.classes.my_classes.DGLGraph g) -> Tensor y",
             &SpMMSrc)
         .op("my_ops::gspmm_src_mul_e_sum(Tensor x, Tensor y, int[] dim, bool "
-            "k, int? t, "
+            "k, ScalarType? t, "
             "__torch__.torch.classes.my_classes.DGLGraph g) -> Tensor z",
             &src_mul_e_sum)
         .op("my_ops::gspmm_dst_mul_e_sum(Tensor x, Tensor y, int[] dim, bool "
-            "k, int? t, "
+            "k, ScalarType? t, "
             "__torch__.torch.classes.my_classes.DGLGraph g) -> Tensor z",
             &dst_mul_e_sum);

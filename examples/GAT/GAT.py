@@ -12,6 +12,7 @@ from graphiler.utils import load_data, setup, check_equal, bench, homo_dataset, 
 
 from GAT_DGL import GAT_DGL
 from GAT_PyG import GAT_PyG
+from GAT_MY import MyGAT
 
 
 device = setup()
@@ -130,12 +131,23 @@ def profile(dataset, feat_dim, repeat=1000):
                   tag="1-DGL-primitives", nvprof=False, repeat=repeat, memory=True, log=log)
         del g, net_dgl
 
+    @empty_cache
+    def run_mygat(g, features):
+        u, v = g.edges()
+        adj = torch.vstack([u, v]).to(device)
+        net_gat = MyGAT(in_dim=feat_dim, hidden_dim=DEFAULT_DIM,
+                        out_dim=DEFAULT_DIM).to(device)
+        net_gat.eval()
+        with torch.no_grad():
+            bench(net=net_gat, net_params=(features, adj),
+                  tag='4-MyGat-primitives', nvprof=False, repeat=repeat, memory=True, log=log)
+
     run_baseline_graphiler(g, features)
     run_pyg(g, features)
     run_dgl(g, features)
+    run_mygat(g, features)
 
     return log
-
 
 def breakdown(dataset, feat_dim, repeat=1000):
     log = init_log(['0-DGL-UDF', '1+compile', '2+reorder',
