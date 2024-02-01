@@ -5,7 +5,7 @@
 #ifndef DGL_BCAST_H_
 #define DGL_BCAST_H_
 
-#include <THC/THC.h>
+// #include <THC/THC.h>
 #include <string>
 #include <torch/torch.h>
 #include <vector>

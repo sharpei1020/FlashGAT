@@ -25,6 +25,6 @@ torch::Tensor SegmentSoftmaxForward(torch::Tensor features, int64_t dim,
 
 // enum class ScalarType : int8_t
 static auto registry = torch::RegisterOperators(
-    "my_ops::SegmentSoftmax(Tensor x, int dim, int? t, "
+    "my_ops::SegmentSoftmax(Tensor x, int dim, ScalarType? t, "
     "__torch__.torch.classes.my_classes.DGLGraph g) -> Tensor y",
     &SegmentSoftmaxForward);

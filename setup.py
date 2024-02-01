@@ -1,26 +1,41 @@
 from setuptools import setup
 
-from torch.utils.cpp_extension import BuildExtension, CppExtension
+from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtension
 
+
+# setup(
+#     name="graphiler",
+#     version="0.0.1",
+#     url="https://github.com/xiezhq-hermann/graphiler",
+#     package_dir={'': 'python'},
+#     packages=['graphiler', 'graphiler.utils'],
+#     ext_modules=[
+#         CppExtension('graphiler.mpdfg', [
+#             'src/pybind.cpp',
+#             'src/builder/builder.cpp',
+#             'src/optimizer/dedup.cpp',
+#             'src/optimizer/split.cpp',
+#             'src/optimizer/reorder.cpp',
+#             'src/optimizer/fusion.cpp'
+#         ]),
+#     ],
+#     cmdclass={
+#         'build_ext': BuildExtension
+#     },
+#     python_requires=">=3.7"
+# )
 
 setup(
-    name="graphiler",
-    version="0.0.1",
-    url="https://github.com/xiezhq-hermann/graphiler",
-    package_dir={'': 'python'},
-    packages=['graphiler', 'graphiler.utils'],
+    name="mygraph",
     ext_modules=[
-        CppExtension('graphiler.mpdfg', [
-            'src/pybind.cpp',
-            'src/builder/builder.cpp',
-            'src/optimizer/dedup.cpp',
-            'src/optimizer/split.cpp',
-            'src/optimizer/reorder.cpp',
-            'src/optimizer/fusion.cpp'
-        ]),
+        CUDAExtension('mygraph', [
+            'src/ops/my_kernel/gcn.cpp',
+            'src/ops/my_kernel/gat.cpp',
+            'src/ops/my_kernel/bind.cc',
+            'src/ops/my_kernel/gcn_kernel.cu',
+            'src/ops/my_kernel/gat_kernel.cu'
+        ],
+        extra_compile_args={'cxx': ['-g'], 'nvcc': ['-O2']},)
     ],
-    cmdclass={
-        'build_ext': BuildExtension
-    },
-    python_requires=">=3.7"
+    cmdclass={'build_ext': BuildExtension},
 )
