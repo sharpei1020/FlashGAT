@@ -14,6 +14,7 @@ from dgl.nn.functional import edge_softmax
 
 from HGT_DGL import HGT_DGLHetero
 from HGT_PyG import HGT_PyG, get_ntype
+from HGT_MY import MyHGT
 
 device = setup()
 
@@ -233,6 +234,7 @@ def profile(dataset, feat_dim, repeat=1000):
         net_pyg_slice = HGT_PyG(feat_dim, DEFAULT_DIM,
                                 DEFAULT_DIM, g.num_ntypes, g.num_rels, mode='slice').to(device)
         net_pyg_slice.eval()
+        # print(g.edata, g.ndata)
         with torch.no_grad():
             bench(net=net_pyg_slice, net_params=(adj, features, g.edata['_TYPE'], g.ndata['_TYPE'], src_type, dst_type),
                   tag="2-PyG-slice", nvprof=False, repeat=repeat, memory=True, log=log)
@@ -252,10 +254,40 @@ def profile(dataset, feat_dim, repeat=1000):
                   tag="4-PyG-bmm", nvprof=False, repeat=repeat, memory=True, log=log)
         del u, v, adj, src_type, dst_type, net_pyg_bmm
 
+    @empty_cache
+    def run_my_slice(g, features):
+        u, v = g.edges()
+        adj = torch.stack([u, v]).to(device)
+        src_type, dst_type = get_ntype(
+            adj, g.edata['_TYPE'], g.ndata['_TYPE'], g.num_rels)
+        net_pyg_slice = MyHGT(feat_dim, DEFAULT_DIM,
+                                DEFAULT_DIM, g.num_ntypes, g.num_rels, mode='slice').to(device)
+        net_pyg_slice.eval()
+        # print(g.edata['_ID'][g.edata['_TYPE'] == 103])
+        with torch.no_grad():
+            bench(net=net_pyg_slice, net_params=(adj, features, g.edata['_TYPE'], g.ndata['_TYPE'], src_type, dst_type),
+                  tag="6-myght-slice", nvprof=False, repeat=repeat, memory=True, log=log)
+        del u, v, adj, src_type, dst_type, net_pyg_slice 
+
+    def run_my_bmm(g, features):
+        u, v = g.edges()
+        adj = torch.stack([u, v]).to(device)
+        src_type, dst_type = get_ntype(
+            adj, g.edata['_TYPE'], g.ndata['_TYPE'], g.num_rels)
+        net_pyg_bmm = MyHGT(feat_dim, DEFAULT_DIM,
+                              DEFAULT_DIM, g.num_ntypes, g.num_rels, mode='bmm').to(device)
+        net_pyg_bmm.eval()
+        with torch.no_grad():
+            bench(net=net_pyg_bmm, net_params=(adj, features, g.edata['_TYPE'].to(device), g.ndata['_TYPE'].to(device), src_type, dst_type),
+                  tag="7-myght-bmm", nvprof=False, repeat=repeat, memory=True, log=log)
+        del u, v, adj, src_type, dst_type, net_pyg_bmm
+
     run_baseline_graphiler(g, features)
     run_dgl_slice(g_hetero, features)
     run_pyg_bmm(g, features)
     run_pyg_slice(g, features)
+    run_my_slice(g, features)
+    run_my_bmm(g, features)
 
     return log
 
@@ -267,7 +299,7 @@ def breakdown(dataset, feat_dim, repeat=1000):
     g, features = load_data(dataset, feat_dim)
     g, features = g.to(device), features.to(device)
     net = HGT(feat_dim, DEFAULT_DIM,
-              DEFAULT_DIM, g.num_ntypes, g.num_rels).to(device)
+              DEFAULT_DIM, g.ntypes, g.num_rels).to(device)
     net.eval()
     with torch.no_grad():
         bench(net=net, net_params=(g, features, "naive"),

@@ -3,7 +3,7 @@
 #include <torch/script.h>
 
 #include <cuda.h>
-#include <cuda_profiler_api.h>
+// #include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
 
 #include "../../include/dglgraph.h"

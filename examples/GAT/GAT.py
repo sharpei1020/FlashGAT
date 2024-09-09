@@ -134,12 +134,14 @@ def profile(dataset, feat_dim, repeat=1000):
     @empty_cache
     def run_mygat(g, features):
         u, v = g.edges()
-        adj = torch.vstack([u, v]).to(device)
+        counts = torch.cumsum(torch.cat([torch.tensor([0]), torch.asarray(g.in_degrees(g.nodes(None).tolist()))]), dim=0).type(torch.IntTensor).to(device)
+        out = g.in_edges(g.nodes(None), form='eid').type(torch.IntTensor).to(device)
+        adj = torch.vstack([u, v]).type(torch.IntTensor).to(device)
         net_gat = MyGAT(in_dim=feat_dim, hidden_dim=DEFAULT_DIM,
                         out_dim=DEFAULT_DIM).to(device)
         net_gat.eval()
         with torch.no_grad():
-            bench(net=net_gat, net_params=(features, adj),
+            bench(net=net_gat, net_params=(features, adj, counts, out),
                   tag='4-MyGat-primitives', nvprof=False, repeat=repeat, memory=True, log=log)
 
     run_baseline_graphiler(g, features)
