@@ -9,7 +9,7 @@ from torch_sparse import SparseTensor
 
 from graphiler import EdgeBatchDummy, NodeBatchDummy, mpdfg_builder, update_all
 from graphiler.utils import load_data, setup, check_equal, bench, homo_dataset, DEFAULT_DIM, init_log, empty_cache
-import mygraph
+from GCN_MY import MyGCN
 
 
 from GCN_DGL import GCN_DGL
@@ -59,35 +59,6 @@ class GCN(nn.Module):
         x = self.layer2(g, x, compile)
         return x
 
-class MyGCNlayer(nn.Module):
-    def __init__(self, in_dim, out_dim):
-        super(MyGCNlayer, self).__init__()
-        self.weight = torch.rand(in_dim, out_dim).to(device)
-
-    def set_linear_weights(self, weight):
-        self.weight = weight
-
-    def forward(self, g, feature):
-        out_feature = torch.zeros(feature.shape[0], self.weight.shape[1]).to(device)
-        src, dst = g.edges()
-        Coosrc, Coodst = src.type(torch.IntTensor).cuda(), dst.type(torch.IntTensor).cuda()
-        node_out_counts = torch.asarray(g.out_degrees(g.nodes(None)).tolist()).type(torch.IntTensor).cuda()
-        node_out_offsets = torch.cumsum(node_out_counts, dim=0).type(torch.IntTensor).cuda()
-        node_out_edge_index = g.out_edges(g.nodes(None), form='eid').type(torch.IntTensor).cuda()
-        assert(len(Coosrc) == len(Coodst))
-        edges_num = len(Coosrc)
-        rows = g.num_src_nodes()
-        cols = g.num_dst_nodes()
-        assert(rows == cols)
-        thread_map = torch.range(rows, dtype=torch.IntTensor).cuda()
-        weight_rows = self.weight.shape[0]
-        weight_cols = self.weight.shape[1]
-        print(node_out_offsets.shape, rows, cols)
-        print([Coodst[node_out_edge_index[i]] for i in range(node_out_offsets[0], node_out_offsets[1])])
-        mygraph.gcn(self.weight, Coosrc, Coodst, node_out_counts, node_out_offsets, \
-                  node_out_edge_index, rows, cols, edges_num, weight_rows, \
-                  weight_cols, feature, out_feature, thread_map)
-        return out_feature
 
 def profile(dataset, feat_dim, repeat=1000):
     log = init_log(["0-DGL-UDF", "1-DGL-primitives", "2-PyG-primitives",
@@ -114,13 +85,15 @@ def profile(dataset, feat_dim, repeat=1000):
 
     @empty_cache
     def run_mygcn(g, features):
-        net = MyGCNlayer(in_dim=feat_dim, out_dim=DEFAULT_DIM)
-        out = net(g, features)
-        return out
-
-
-
-        
+        src, dst = g.edges()
+        counts = torch.cumsum(torch.cat([torch.tensor([0]), torch.asarray(g.in_degrees(g.nodes(None).tolist()))]), dim=0).type(torch.IntTensor).to(device)
+        out = g.in_edges(g.nodes(None), form='eid').type(torch.IntTensor).to(device)
+        adj = torch.vstack([src, dst]).type(torch.IntTensor).to(device)
+        net = MyGCN(in_dim=feat_dim, hidden_dim=DEFAULT_DIM, out_dim=DEFAULT_DIM).to(device)
+        net.eval()
+        with torch.no_grad():
+            bench(net=net, net_params=(features, adj, counts, out), tag="4-MyGCN", nvprof=False,              
+                  repeat=repeat, memory=True, log=log)
 
     @empty_cache
     def run_pyg(g, features):
@@ -145,9 +118,9 @@ def profile(dataset, feat_dim, repeat=1000):
             bench(net=net_dgl, net_params=(g, features),
                   tag="1-DGL-primitives", nvprof=False, repeat=repeat, memory=True, log=log)
 
-    # run_baseline_and_graphiler(g, features)
-    # run_pyg(g, features)
-    # run_dgl(g, features)
+    run_baseline_and_graphiler(g, features)
+    run_pyg(g, features)
+    run_dgl(g, features)
     run_mygcn(g, features)
 
     return log

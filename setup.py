@@ -29,8 +29,6 @@ setup(
     name="mygraph",
     ext_modules=[
         CUDAExtension('mygraph', [
-            'src/ops/my_kernel/gcn.cpp',
-            'src/ops/my_kernel/gat.cpp',
             'src/ops/my_kernel/bind.cc',
             'src/ops/my_kernel/gcn_kernel.cu',
             'src/ops/my_kernel/gat_kernel.cu'
