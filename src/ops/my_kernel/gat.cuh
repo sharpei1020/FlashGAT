@@ -27,7 +27,33 @@ __device__ static inline void debug(float *temp, float *test_output, int embed)
     }
 }
 
-__global__ void linear(const float* __restrict__ weight, const float* __restrict__ bias, const float* __restrict__ X, float*  __restrict__ Z, int M, int K, bool bias_flag);
+__global__ void linear(
+    const float* __restrict__ weight, 
+    const float* __restrict__ bias, 
+    const float* __restrict__ X,
+    const float* __restrict__ att_i,
+    const float* __restrict__ att_j, 
+    float*  __restrict__ Z, 
+    float*  __restrict__ alpha_i,
+    float*  __restrict__ alpha_j,
+    int M, 
+    int K, 
+    bool bias_flag);
+
+__global__ void gat(
+    int* edge_index_0,
+    int* edge_index_1,
+    int* count,
+    int* out,
+    float* x,
+    float* output,
+    float* alpha_i,
+    float* alpha_j,
+
+    int num_heads,
+    int out_feats,
+    int total_size,
+    int edge_len);
 
 at::Tensor GAT(
     torch::Tensor x, 
