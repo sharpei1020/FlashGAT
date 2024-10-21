@@ -27,13 +27,18 @@ from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtensio
 
 setup(
     name="mygraph",
+    package_dir={'':'python'},
+    packages=['minhash_order'],
     ext_modules=[
         CUDAExtension('mygraph', [
+            'src/ops/my_kernel/rabbit_order/reorder.cpp',
             'src/ops/my_kernel/bind.cc',
+            'src/ops/my_kernel/preprocess.cu',
             'src/ops/my_kernel/gcn_kernel.cu',
             'src/ops/my_kernel/gat_kernel.cu'
         ],
-        extra_compile_args={'cxx': ['-g'], 'nvcc': ['-O2']},)
+        extra_compile_args={'cxx': ['-g', '-fopenmp', '-mcx16', '-fconcepts'], 'nvcc': ['-O2', '--extended-lambda']},
+        libraries=['numa'])
     ],
     cmdclass={'build_ext': BuildExtension},
 )

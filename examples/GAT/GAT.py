@@ -84,6 +84,7 @@ class GAT(nn.Module):
         h = self.layer2(g, h, compile)
         return h
 
+import matplotlib.pyplot as plt
 
 def profile(dataset, feat_dim, repeat=1000):
     log = init_log(["0-DGL-UDF", "1-DGL-primitives", "2-PyG-primitives",
@@ -102,10 +103,10 @@ def profile(dataset, feat_dim, repeat=1000):
         with torch.no_grad():
             compile_res = bench(net=net, net_params=(
                 g, features, True), tag="3-Graphiler", nvprof=False, repeat=repeat, memory=True, log=log)
-            res = bench(net=net, net_params=(g, features, False),
-                        tag="0-DGL-UDF", nvprof=False, repeat=repeat, memory=True, log=log)
-            check_equal(compile_res, res)
-        del g, net, compile_res, res
+            # res = bench(net=net, net_params=(g, features, False),
+            #             tag="0-DGL-UDF", nvprof=False, repeat=repeat, memory=True, log=log)
+            # check_equal(compile_res, res)
+        del g, net, compile_res
 
     @empty_cache
     def run_pyg(g, features):
@@ -131,18 +132,58 @@ def profile(dataset, feat_dim, repeat=1000):
                   tag="1-DGL-primitives", nvprof=False, repeat=repeat, memory=True, log=log)
         del g, net_dgl
 
+    import mygraph
     @empty_cache
     def run_mygat(g, features):
         u, v = g.edges()
-        counts = torch.cumsum(torch.cat([torch.tensor([0]), torch.asarray(g.in_degrees(g.nodes(None).tolist()))]), dim=0).type(torch.IntTensor).to(device)
-        out = g.in_edges(g.nodes(None), form='eid').type(torch.IntTensor).to(device)
-        adj = torch.vstack([u, v]).type(torch.IntTensor).to(device)
+        node_num = g.num_nodes()
+        adj = torch.vstack([u, v]).type(torch.IntTensor)
+        adj_ = adj.clone()
+        counts = g.in_degrees(g.nodes(None)).tolist()
+        # from minhash_order import reorder_weighted_minhashLSH
+        # node_idx, dev_idx = reorder_weighted_minhashLSH(v, u, node_num)
+        # print(node_idx, dev_idx, len(node_idx), len(dev_idx))
+        node_idx = torch.arange(0, node_num).type(torch.IntTensor).to(device)
+        dev_idx = torch.arange(0, node_num).type(torch.IntTensor).to(device)
+        RowWindowOffset, TCOffset, BlockMask, SparseAToX = mygraph.process_DTC(adj.to(device), dev_idx, 16, 8, node_num)
+        # print(RowWindowOffset, TCOffset, BlockMask, SparseAToX)
+        # print(BlockMask[RowWindowOffset[161]*16:RowWindowOffset[162]*16])
+
+        # group = 64
+        # import matplotlib.pyplot as plt
+        # plt.subplot(221)
+        # plt.scatter(u, v, s=0.1)
+        # adj = torch.vstack([u, v]).type(torch.IntTensor)
+        # new_adj, new_ord = adj, torch.arange(0, len(counts)).type(torch.IntTensor)
+        # offset, out_edge_index = mygraph.preprocess_graph(adj.to(device), counts, group, features.size(0))
+        # new_adj, new_ord = mygraph.reorder(adj)
+        # density = new_adj.size()[1] / (new_ord.size()[0] * new_ord.size()[0])
+        # print(new_ord.size()[0], density)
+        # idx_set, idx_mask, idx_offset = mygraph.get_graph_set(new_adj.to(device), group, new_ord.size()[0])
+        # density = idx_mask.sum().item() / (idx_mask.size()[0] * group)
+        # print(density)
+        # print(idx_set, idx_mask, idx_offset)
+        # import os
+        # os._exit(0)
+        # print(new_ord, len(new_ord))
+        # counts = counts[new_ord]
+        # offset, out_edge_idx = mygraph.preprocess_graph(new_adj.to(device), counts.to(device), 1, features.size(0))
+        # plt.subplot(222)
+        # plt.scatter(new_adj, new_adj, s=0.1)
+        # plt.show()
+
+        # plt.scatter(u, v[:500])
+        # plt.show()
+        # map = torch.arange(0, len(counts)).type(torch.IntTensor).to(device)
+        # counts = torch.cumsum(torch.cat([torch.tensor([0]), torch.asarray(g.in_degrees(g.nodes(None).tolist()))]), dim=0).type(torch.IntTensor).to(device)
+        # out = g.in_edges(g.nodes(None), form='eid').type(torch.IntTensor).to(device)
         net_gat = MyGAT(in_dim=feat_dim, hidden_dim=DEFAULT_DIM,
                         out_dim=DEFAULT_DIM).to(device)
         net_gat.eval()
         with torch.no_grad():
-            bench(net=net_gat, net_params=(features, adj, counts, out),
+            bench(net=net_gat, net_params=(features, adj_.to(device), RowWindowOffset, TCOffset, BlockMask, SparseAToX, node_idx, counts),
                   tag='4-MyGat-primitives', nvprof=False, repeat=repeat, memory=True, log=log)
+        del g, net_gat, u, v, adj, RowWindowOffset, TCOffset, BlockMask, SparseAToX
 
     run_baseline_graphiler(g, features)
     run_pyg(g, features)
