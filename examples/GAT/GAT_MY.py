@@ -63,7 +63,7 @@ class MyGATlayer(nn.Module):
         glorot(self.att_i)
         glorot(self.att_j)
 
-    def forward(self, x, edge_index, counts, out_edge_idx, layer_i):
+    def forward(self, x, edge_index, RowWindowOffset, TCOffset, BlockMask, SparseAToX, node_idx, counts, layer_i):
 ############################################################
         # class Container(torch.nn.Module):
         #     def __init__(self, mydata):
@@ -71,11 +71,13 @@ class MyGATlayer(nn.Module):
         #         for key, value in mydata.items():
         #             self.register_buffer(key, value)
 
-        # mydata = {"x": x, "edge_index_0": edge_index[0], "edge_index_1": edge_index[1], 
-        #           "counts": counts, "out_edge_index": out_edge_idx}
+        # mydata = {"x": x, "RowWindowOffset": RowWindowOffset, "TCOffset": TCOffset, 
+        #           "BlockMask": BlockMask, "SparseAToX": SparseAToX}
         
         # container = torch.jit.script(Container(mydata))
         # torch.jit.save(container, f"{layer_i}_data.pt")
+        # import os
+        # os._exit(0)
 
         # torch.jit.save(torch.jit.script(self.lin), f"{layer_i}_lin.pt")
         # torch.jit.save(torch.jit.script(Container({"att_i": self.att_i.data})), f"{layer_i}_att_i.pt")
@@ -83,17 +85,25 @@ class MyGATlayer(nn.Module):
         # x_test = torch.zeros((x.size(0), self._out_feats * self._num_heads)).to("cuda")
 ##################################################################
         # if torch.is_tensor(x):
-        #     x_ = self.dropout(x)
-        #     x_ = self.lin(x_)
+        #     # x_ = self.dropout(x)
+        #     x_ = self.lin(x)
         #     x_ = (x_, x_)
         # else:
         #     x_ = (self.dropout(x[0]), self.dropout(x[1]))
         #     x_ = (self.lin(x_[0]), self.lin(x_[1]))
 
-        bias = torch.empty((self._num_heads * self._out_feats), device=x.device)
-        out = mygraph.gat(x, edge_index[0], edge_index[1], counts, out_edge_idx, self.lin.weight,\
-                            bias, self.att_i.data, self.att_j.data, self._num_heads, self._out_feats)
-        
+        # out_ = self.propagate(edge_index, x=x_)
+
+
+        # x_test = torch.empty((x.size(0), self._out_feats), dtype=x.dtype, device="cuda")
+        out = mygraph.gat(x, RowWindowOffset, TCOffset, BlockMask, SparseAToX, self.lin.weight,\
+                          self.att_i.data, self.att_j.data, node_idx, self._num_heads, self._out_feats)
+############################################################        
+        # condition_out = torch.all(torch.abs(out_ - out) < 0.1, dim=-1).cpu()
+        # idxs = torch.nonzero(torch.where(condition_out, torch.zeros(condition_out.shape), torch.ones(condition_out.shape)))
+        # print(out_[idxs[0]], out[idxs[0]], torch.tensor(counts)[idxs].squeeze())
+        # print(idxs.shape[0])
+        # assert(torch.all(condition_out).item())
 #############################################################
         # condition_lin = torch.all(torch.abs(lin_x - x_test) < 1e-5, dim=-1).cpu()
         # print(torch.nonzero(torch.where(condition_lin, torch.zeros(condition_lin.shape), torch.ones(condition_lin.shape))))
@@ -197,10 +207,10 @@ class MyGAT(nn.Module):
         self.conv1 = MyGATlayer(in_dim, hidden_dim, 1)
         self.conv2 = MyGATlayer(hidden_dim, out_dim, 1)
 
-    def forward(self, x, adj, counts, out_edge_idx):
-        h = self.conv1(x, adj, counts, out_edge_idx, 1)
+    def forward(self, x, adj, RowWindowOffset, TCOffset, BlockMask, SparseAToX, node_idx, counts):
+        h = self.conv1(x, adj, RowWindowOffset, TCOffset, BlockMask, SparseAToX, node_idx, counts, 1)
         h = F.elu(h)
-        h = self.conv2(h, adj, counts, out_edge_idx, 2)
+        h = self.conv2(h, adj, RowWindowOffset, TCOffset, BlockMask, SparseAToX, node_idx, counts, 2)
         return h
 
 

@@ -371,7 +371,7 @@ __global__ __launch_bounds__(256, 6) void gat(
             FLOAT4(temp[j * 4]) = tmp;
             alpha += (tmp.x * att.x + tmp.y * att.y + tmp.z * att.z + tmp.w * att.w);
         }
-        alpha = __expf(alpha - 0.99f * min(0.0f, alpha));
+        alpha = alpha - 0.99f * min(0.0f, alpha);
         int iter = n;
         while (iter > 1) {
             alpha += __shfl_xor_sync(FULL_MASK, alpha, iter-1);
