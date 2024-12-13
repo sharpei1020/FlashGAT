@@ -64,7 +64,32 @@ at::Tensor GAT(
     at::Tensor lin_weight,
     at::Tensor att_i,
     at::Tensor att_j,
-    at::Tensor node_idx,
+    int num_heads,
+    int out_feats
+);
+
+at::Tensor GAT_balance(
+    at::Tensor feature,
+    at::Tensor RowWindowOffset,     // RowWindow-Row nonzero-block Offset
+    at::Tensor RowWindowRowOffset,  // RowWindow Row offset
+    at::Tensor TCOffset,            // RowWindow-Row nonzero-element Offset
+    at::Tensor BlockMask,           // TC-Block Mask
+    at::Tensor SparseAToX,          // SparseA-X nonzero-element colidx
+    at::Tensor lin_weight,
+    at::Tensor att_i,
+    at::Tensor att_j,
+    int num_heads,
+    int out_feats
+);
+
+at::Tensor sputnik_GAT(
+    at::Tensor feature,
+    at::Tensor row_idx,
+    at::Tensor row_offset,
+    at::Tensor col_idx,
+    at::Tensor lin_weight,
+    at::Tensor att_i,
+    at::Tensor att_j,
     int num_heads,
     int out_feats
 );

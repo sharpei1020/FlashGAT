@@ -63,7 +63,7 @@ class MyGATlayer(nn.Module):
         glorot(self.att_i)
         glorot(self.att_j)
 
-    def forward(self, x, edge_index, RowWindowOffset, TCOffset, BlockMask, SparseAToX, node_idx, counts, layer_i):
+    def forward(self, x, edge_index, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, counts, layer_i):
 ############################################################
         # class Container(torch.nn.Module):
         #     def __init__(self, mydata):
@@ -96,13 +96,26 @@ class MyGATlayer(nn.Module):
 
 
         # x_test = torch.empty((x.size(0), self._out_feats), dtype=x.dtype, device="cuda")
-        out = mygraph.gat(x, RowWindowOffset, TCOffset, BlockMask, SparseAToX, self.lin.weight,\
-                          self.att_i.data, self.att_j.data, node_idx, self._num_heads, self._out_feats)
+        out = mygraph.gat_balance(x, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, self.lin.weight,\
+                          self.att_i.data, self.att_j.data, self._num_heads, self._out_feats)
 ############################################################        
-        # condition_out = torch.all(torch.abs(out_ - out) < 0.1, dim=-1).cpu()
+        # condition_out = torch.all(torch.abs(out_ - out) < 0.5, dim=-1).cpu()
         # idxs = torch.nonzero(torch.where(condition_out, torch.zeros(condition_out.shape), torch.ones(condition_out.shape)))
-        # print(out_[idxs[0]], out[idxs[0]], torch.tensor(counts)[idxs].squeeze())
-        # print(idxs.shape[0])
+        # for i in range(16):
+        #     print(out_[idxs[i]], out[idxs[i]])
+        # debug_counts = torch.tensor(counts)[idxs].squeeze()[:16]
+        # print(debug_counts)
+        # for i in range(16):
+        #     row_idx = idxs[i] // 16
+        #     row_start = RowWindowRowOffset[row_idx]
+        #     row_end = RowWindowRowOffset[row_idx+1]
+        #     row_blocknum_set = []
+        #     for j in range(row_start, row_end):
+        #         row_blocknum_set.append((RowWindowOffset[j+1] - RowWindowOffset[j]).item())
+        #     print(f"row {row_idx}: {row_blocknum_set}")
+
+        # print(idxs[:16], len(idxs))
+        # BlockMask.cpu()[RowWindowOffset[161]*16:RowWindowOffset[162]*16].reshape(-1, 16)
         # assert(torch.all(condition_out).item())
 #############################################################
         # condition_lin = torch.all(torch.abs(lin_x - x_test) < 1e-5, dim=-1).cpu()
@@ -207,10 +220,74 @@ class MyGAT(nn.Module):
         self.conv1 = MyGATlayer(in_dim, hidden_dim, 1)
         self.conv2 = MyGATlayer(hidden_dim, out_dim, 1)
 
-    def forward(self, x, adj, RowWindowOffset, TCOffset, BlockMask, SparseAToX, node_idx, counts):
-        h = self.conv1(x, adj, RowWindowOffset, TCOffset, BlockMask, SparseAToX, node_idx, counts, 1)
+    def forward(self, x, adj, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, counts):
+        h = self.conv1(x, adj, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, counts, 1)
         h = F.elu(h)
-        h = self.conv2(h, adj, RowWindowOffset, TCOffset, BlockMask, SparseAToX, node_idx, counts, 2)
+        h = self.conv2(h, adj, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, counts, 2)
         return h
 
 
+class SputnikGATLayer(nn.Module):
+    def __init__(self,
+                 in_feats,
+                 out_feats,
+                 num_heads,
+                 concat=True,
+                 dropout=0.,
+                 activation=None):
+        super(SputnikGATLayer, self).__init__()
+
+        self.node_dim = -2
+        self._in_feats = in_feats
+        self._out_feats = out_feats
+        self._num_heads = num_heads
+        self.concat = concat
+        self.dropout = nn.Dropout(dropout)
+
+        self.lin = nn.Linear(in_feats, num_heads * out_feats, bias=False)
+
+        self.att_i = nn.Parameter(torch.Tensor(1, num_heads, out_feats))
+        self.att_j = nn.Parameter(torch.Tensor(1, num_heads, out_feats))
+
+        self.reset_parameters()
+        self.activation = activation
+        self.aggr_module = SumAggregation()
+
+    def reset_parameters(self):
+        glorot(self.lin.weight)
+        glorot(self.att_i)
+        glorot(self.att_j)
+
+    def forward(self, x, row_id, row_ptr, col_id):
+        # class Container(torch.nn.Module):
+        #     def __init__(self, mydata):
+        #         super(Container, self).__init__()
+        #         for key, value in mydata.items():
+        #             self.register_buffer(key, value)
+
+        # mydata = {"x": x, "row_id": row_id, "row_ptr": row_ptr, "col_id": col_id}
+        # print(mydata)
+        # container = torch.jit.script(Container(mydata))
+        # torch.jit.save(container, f"sputnik_data.pt")
+        # torch.jit.save(torch.jit.script(self.lin), f"sputnik_lin.pt")
+        # import os
+        # os._exit(0)
+
+        return mygraph.sputnik_gat(x, row_id, row_ptr, col_id, self.lin.weight, \
+                                 self.att_i.data, self.att_j.data, self._num_heads, self._out_feats)
+
+class SputnikGAT(nn.Module):
+    def __init__(self,
+                 in_dim,
+                 hidden_dim,
+                 out_dim):
+        super(SputnikGAT, self).__init__()
+
+        self.conv1 = SputnikGATLayer(in_dim, hidden_dim, 1)
+        self.conv2 = SputnikGATLayer(hidden_dim, out_dim, 1)
+
+    def forward(self, x, adj, row_ptr):
+        h = self.conv1(x, adj[1], row_ptr, adj[0])
+        h = F.elu(h)
+        h = self.conv2(h, adj[1], row_ptr, adj[0])
+        return h

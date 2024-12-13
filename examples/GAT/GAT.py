@@ -12,7 +12,10 @@ from graphiler.utils import load_data, setup, check_equal, bench, homo_dataset, 
 
 from GAT_DGL import GAT_DGL
 from GAT_PyG import GAT_PyG
-from GAT_MY import MyGAT
+
+from ctypes import cdll
+cdll.LoadLibrary('/home/ljq/mine/graphiler/src/build/sputnik/libsputnik.so')
+from GAT_MY import MyGAT, SputnikGAT
 
 
 device = setup()
@@ -145,7 +148,8 @@ def profile(dataset, feat_dim, repeat=1000):
         # print(node_idx, dev_idx, len(node_idx), len(dev_idx))
         node_idx = torch.arange(0, node_num).type(torch.IntTensor).to(device)
         dev_idx = torch.arange(0, node_num).type(torch.IntTensor).to(device)
-        RowWindowOffset, TCOffset, BlockMask, SparseAToX = mygraph.process_DTC(adj.to(device), dev_idx, 16, 8, node_num)
+        RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX = mygraph.process_DTC(adj.to(device), dev_idx, 16, 8, node_num, True)
+        # print(RowWindowOffset[:10], RowWindowRowOffset[:10], TCOffset[:10])
         # print(RowWindowOffset, TCOffset, BlockMask, SparseAToX)
         # print(BlockMask[RowWindowOffset[161]*16:RowWindowOffset[162]*16])
 
@@ -181,14 +185,33 @@ def profile(dataset, feat_dim, repeat=1000):
                         out_dim=DEFAULT_DIM).to(device)
         net_gat.eval()
         with torch.no_grad():
-            bench(net=net_gat, net_params=(features, adj_.to(device), RowWindowOffset, TCOffset, BlockMask, SparseAToX, node_idx, counts),
+            bench(net=net_gat, net_params=(features, adj_.to(device), RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, counts),
                   tag='4-MyGat-primitives', nvprof=False, repeat=repeat, memory=True, log=log)
-        del g, net_gat, u, v, adj, RowWindowOffset, TCOffset, BlockMask, SparseAToX
+        del net_gat, u, v, adj, RowWindowOffset, TCOffset, BlockMask, SparseAToX, adj_, node_idx, dev_idx, counts
+
+    @empty_cache
+    def run_sputnik_gat(g, features):
+        u, v = g.edges()
+        node_num = g.num_nodes()
+        adj = torch.vstack([u, v]).type(torch.IntTensor).to(device)
+        counts = g.in_degrees(g.nodes(None)).tolist()
+        counts = torch.tensor(counts, dtype=torch.int32, device=device)
+        row_offset, edge_idx = mygraph.preprocess_CSR(adj, counts, 1, node_num)
+        adj_ = adj[:, edge_idx].contiguous()
+        net_gat = SputnikGAT(in_dim=feat_dim, hidden_dim=DEFAULT_DIM,
+                        out_dim=DEFAULT_DIM).to(device)
+        net_gat.eval()
+        with torch.no_grad():
+            bench(net=net_gat, net_params=(features, adj_.to(device), row_offset),
+                  tag='5-SputnikGat-primitives', nvprof=False, repeat=repeat, memory=True, log=log)
+        del g, net_gat, u, v, adj, row_offset, edge_idx, adj_, counts
+
 
     run_baseline_graphiler(g, features)
     run_pyg(g, features)
     run_dgl(g, features)
     run_mygat(g, features)
+    run_sputnik_gat(g, features)
 
     return log
 
