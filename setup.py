@@ -35,10 +35,15 @@ setup(
             'src/ops/my_kernel/bind.cc',
             'src/ops/my_kernel/preprocess.cu',
             'src/ops/my_kernel/gcn_kernel.cu',
-            'src/ops/my_kernel/gat_kernel.cu'
+            'src/ops/my_kernel/gat_kernel.cu',
+            'src/ops/my_kernel/agnn_kernel.cu',
+            'src/ops/my_kernel/sputnik_gat_kernel.cu',
+            'src/ops/my_kernel/sputnik_agnn_kernel.cu'
         ],
         extra_compile_args={'cxx': ['-g', '-fopenmp', '-mcx16', '-fconcepts'], 'nvcc': ['-O2', '--extended-lambda']},
-        libraries=['numa'])
+        library_dirs=['/home/ljq/mine/graphiler/src/build/sputnik'],
+        libraries=['numa', 'sputnik'],
+        include_dirs=['/home/ljq/mine/graphiler/src/'])
     ],
     cmdclass={'build_ext': BuildExtension},
 )
