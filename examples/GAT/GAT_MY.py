@@ -84,6 +84,7 @@ class MyGATlayer(nn.Module):
         # torch.jit.save(torch.jit.script(Container({"att_j": self.att_j.data})), f"{layer_i}_att_j.pt")
         # x_test = torch.zeros((x.size(0), self._out_feats * self._num_heads)).to("cuda")
 ##################################################################
+        # torch.backends.cudnn.allow_tf32 = False
         # if torch.is_tensor(x):
         #     # x_ = self.dropout(x)
         #     x_ = self.lin(x)
@@ -99,7 +100,7 @@ class MyGATlayer(nn.Module):
         out = mygraph.gat_balance(x, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, self.lin.weight,\
                           self.att_i.data, self.att_j.data, self._num_heads, self._out_feats)
 ############################################################        
-        # condition_out = torch.all(torch.abs(out_ - out) < 0.5, dim=-1).cpu()
+        # condition_out = torch.all(torch.abs(out_ - out) < 0.4, dim=-1).cpu()
         # idxs = torch.nonzero(torch.where(condition_out, torch.zeros(condition_out.shape), torch.ones(condition_out.shape)))
         # for i in range(16):
         #     print(out_[idxs[i]], out[idxs[i]])
@@ -141,6 +142,8 @@ class MyGATlayer(nn.Module):
 
     def message(self, x_i, x_j, edge_index_i, size_i):
         # Compute attention coefficients.
+        # torch.backends.cudnn.allow_tf32 = False
+
         x_i = x_i.view(-1, self._num_heads, self._out_feats)
         x_j = x_j.view(-1, self._num_heads, self._out_feats)
 
@@ -226,6 +229,55 @@ class MyGAT(nn.Module):
         h = self.conv2(h, adj, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, counts, 2)
         return h
 
+class MyGATlayer_new(MyGATlayer):
+    def __init__(self,
+                 in_feats,
+                 out_feats,
+                 num_heads,
+                 concat=True,
+                 dropout=0.,
+                 activation=None):
+        super(MyGATlayer_new, self).__init__(in_feats,
+                 out_feats,
+                 num_heads)
+
+    def reset_parameters(self):
+        glorot(self.lin.weight)
+        glorot(self.att_i)
+        glorot(self.att_j)
+
+    def forward(self, x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask):
+        # class Container(torch.nn.Module):
+        #     def __init__(self, mydata):
+        #         super(Container, self).__init__()
+        #         for key, value in mydata.items():
+        #             self.register_buffer(key, value)
+
+        # mydata = {"x": x, "RowWindowOffset": RowWindowOffsets, "BitMaskRowOffset": BitMaskRowOffset, 
+        #           "BitColMask": BitColMask, "BitRowMask": BitRowMask,"SparseAToX": SparseAToX}
+        
+        # container = torch.jit.script(Container(mydata))
+        # torch.jit.save(container, f"data_16x16.pt")
+        # import os
+        # os._exit(0)
+        return mygraph.gat_short(x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.lin.weight,\
+                                  self.att_i.data, self.att_j.data, self._num_heads, self._out_feats)
+
+class MyGAT_new(nn.Module):
+    def __init__(self,
+                 in_dim,
+                 hidden_dim,
+                 out_dim):
+        super(MyGAT_new, self).__init__()
+
+        self.conv1 = MyGATlayer_new(in_dim, hidden_dim, 1)
+        self.conv2 = MyGATlayer_new(hidden_dim, out_dim, 1)
+
+    def forward(self, x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask):
+        h = self.conv1(x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask)
+        h = F.elu(h)
+        h = self.conv2(h, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask)
+        return h
 
 class SputnikGATLayer(nn.Module):
     def __init__(self,

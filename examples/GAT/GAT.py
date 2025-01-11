@@ -15,7 +15,7 @@ from GAT_PyG import GAT_PyG
 
 from ctypes import cdll
 cdll.LoadLibrary('/home/ljq/mine/graphiler/src/build/sputnik/libsputnik.so')
-from GAT_MY import MyGAT, SputnikGAT
+from GAT_MY import MyGAT, MyGAT_new, SputnikGAT
 
 
 device = setup()
@@ -126,14 +126,14 @@ def profile(dataset, feat_dim, repeat=1000):
 
     @empty_cache
     def run_dgl(g, features):
-        g = g.to(device)
+        g_ = g.to(device)
         net_dgl = GAT_DGL(in_dim=feat_dim, hidden_dim=DEFAULT_DIM,
                           out_dim=DEFAULT_DIM).to(device)
         net_dgl.eval()
         with torch.no_grad():
-            bench(net=net_dgl, net_params=(g, features),
+            bench(net=net_dgl, net_params=(g_, features),
                   tag="1-DGL-primitives", nvprof=False, repeat=repeat, memory=True, log=log)
-        del g, net_dgl
+        del g_, net_dgl
 
     import mygraph
     @empty_cache
@@ -149,6 +149,8 @@ def profile(dataset, feat_dim, repeat=1000):
         node_idx = torch.arange(0, node_num).type(torch.IntTensor).to(device)
         dev_idx = torch.arange(0, node_num).type(torch.IntTensor).to(device)
         RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX = mygraph.process_DTC(adj.to(device), dev_idx, 16, 8, node_num, True)
+        # RowWindowOffset_, RowWindowRowOffset_, TCOffset_, BlockMask_, SparseAToX_ = mygraph.process_DTC(adj.to(device), dev_idx, 16, 8, node_num, False)
+        # assert(torch.all(RowWindowOffset[RowWindowRowOffset] == RowWindowOffset_))
         # print(RowWindowOffset[:10], RowWindowRowOffset[:10], TCOffset[:10])
         # print(RowWindowOffset, TCOffset, BlockMask, SparseAToX)
         # print(BlockMask[RowWindowOffset[161]*16:RowWindowOffset[162]*16])
@@ -187,7 +189,7 @@ def profile(dataset, feat_dim, repeat=1000):
         with torch.no_grad():
             bench(net=net_gat, net_params=(features, adj_.to(device), RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, counts),
                   tag='4-MyGat-primitives', nvprof=False, repeat=repeat, memory=True, log=log)
-        del net_gat, u, v, adj, RowWindowOffset, TCOffset, BlockMask, SparseAToX, adj_, node_idx, dev_idx, counts
+        del net_gat, u, v, adj, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, adj_, node_idx, dev_idx, counts
 
     @empty_cache
     def run_sputnik_gat(g, features):
@@ -204,14 +206,30 @@ def profile(dataset, feat_dim, repeat=1000):
         with torch.no_grad():
             bench(net=net_gat, net_params=(features, adj_.to(device), row_offset),
                   tag='5-SputnikGat-primitives', nvprof=False, repeat=repeat, memory=True, log=log)
-        del g, net_gat, u, v, adj, row_offset, edge_idx, adj_, counts
+        del net_gat, u, v, adj, row_offset, edge_idx, adj_, counts
+
+    @empty_cache
+    def run_mygat_new(g, features):
+        u, v = g.edges()
+        node_num = g.num_nodes()
+        adj = torch.vstack([u, v]).type(torch.IntTensor)
+        RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX = mygraph.process_DTC_short_mask(adj.to(device), 16, 16, node_num, False)
+        net_gat = MyGAT_new(in_dim=feat_dim, hidden_dim=DEFAULT_DIM,
+                        out_dim=DEFAULT_DIM).to(device)
+        net_gat.eval()
+        with torch.no_grad():
+            bench(net=net_gat, net_params=(features, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask),
+                  tag='6-MyGat-new', nvprof=False, repeat=repeat, memory=True, log=log)
+        del net_gat, u, v, adj, RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX
 
 
     run_baseline_graphiler(g, features)
     run_pyg(g, features)
-    run_dgl(g, features)
     run_mygat(g, features)
+    run_mygat_new(g, features)
+    run_dgl(g, features)
     run_sputnik_gat(g, features)
+    
 
     return log
 
@@ -243,7 +261,7 @@ def breakdown(dataset, feat_dim, repeat=1000):
 
 
 if __name__ == '__main__':
-    repeat = int(os.environ.get('REPEAT', 50))
+    repeat = int(os.environ.get('REPEAT', 1000))
     if len(sys.argv) != 3:
         print("usage: python GAT.py [dataset] [feat_dim]")
         exit()

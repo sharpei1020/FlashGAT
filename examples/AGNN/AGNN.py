@@ -22,12 +22,13 @@ import mygraph
 import dgl
 from torch_sparse import SparseTensor
 from graphiler.utils import init_log, load_data, setup, empty_cache, bench
-
+import torch.nn.functional as F
+from torch_geometric.utils import softmax
 
 n_heads = 1
 device = setup()
 
-USE_DGL_DATASET = True
+USE_DGL_DATASET = False
 
 # BREAK_FLAG = 2
 
@@ -37,9 +38,11 @@ if USE_DGL_DATASET:
     from graphiler.utils import homo_dataset
 else:
     from dataset import *
-    homo_dataset = {'citeseer':3703, 'cora':1433, 'pubmed':500, 
+    homo_dataset = {
+                        'citeseer':3703, 'cora':1433, 'pubmed':500, 
                         'ppi':50, 'PROTEINS_full':29, 'OVCAR-8H':66,
-                        'Yeast':74, 'DD':89, 'YeastH':75, 'amazon0505':96,
+                        'Yeast':74, 
+                        'DD':89, 'YeastH':75, 'amazon0505':96,
                         'artist':100, 'com-amazon':96, 'soc-BlogCatalog':128,
                         'amazon0601':96}
 
@@ -50,7 +53,8 @@ class TCGNNFunction_AGNN(torch.autograd.Function):
         # ctx.save_for_backward(X, weights, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow)
 
         # GEMM node update
-        X_prime = torch.mm(X, weights)
+        # X_prime = torch.mm(X, weights)
+        X_prime = F.normalize(X, p=2, dim=-1)
         
         # SDDMM: edge feature computation. 
         # import time
@@ -62,15 +66,16 @@ class TCGNNFunction_AGNN(torch.autograd.Function):
 
         # Edge Attention Generation: [n_e, n_head]       
         edge_attentions = torch.mm(edge_feature.unsqueeze(-1), attention_w).transpose(0,1).contiguous()
+        edge_attentions = softmax(edge_attentions.squeeze(), edgeToRow.to(torch.int64), 
+                                  row_pointers.to(torch.int64), num_nodes=len(row_pointers)-1).reshape(1, -1)
         # print(edge_attentions.size())
-
         # SpMM_AGNN: Neighbor AggreAGNNion.
         # torch.cuda.synchronize()
         # t = time.time()
         X_prime = TCGNN.forward_AGNN(X_prime, row_pointers, column_index, edge_attentions, blockPartition, edgeToColumn, edgeToRow)[0]
         # torch.cuda.synchronize()
         # print("spmm time:{:.2f} ms".format((time.time() - t) * 1000))
-
+        # print("finish forward")
         ctx.save_for_backward(X, weights, row_pointers, column_index, edge_attentions, blockPartition, edgeToColumn, edgeToRow)
         # print("==========After Aggreation=========")
         return X_prime
@@ -139,18 +144,18 @@ class AGNNConvLayer(torch.nn.Module):
 class TC_AGNN(torch.nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
         super(TC_AGNN, self).__init__()
-        self.conv1 = AGNNConvLayer(input_dim, hidden_dim)
+        self.lin1 = nn.Linear(input_dim, hidden_dim)
         self.hidden_layers = nn.ModuleList()
-        for _ in range(2):
+        for _ in range(4):
             self.hidden_layers.append(AGNNConvLayer(hidden_dim, hidden_dim))
-        self.conv2 = AGNNConvLayer(hidden_dim, hidden_dim)
+        self.lin2 = nn.Linear(hidden_dim, output_dim)
         self.relu = nn.ReLU(True)
 
     def forward(self, X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow):
-        X = self.relu(self.conv1(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow))
+        X = self.relu(self.lin1(X))
         for Gconv in self.hidden_layers:
             X = self.relu(Gconv(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow))
-        X = self.conv2(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow)
+        X = self.lin2(X)
         return X
 
 DIM = 32
@@ -164,12 +169,13 @@ def profile(dataset_name, feat_dim, repeat=1000):
         dataset, features = load_data(dataset_name, feat_dim, prepare=False)
         features = features.to(device)
     else:
-        dataset = TCGNN_dataset(os.path.join("tcgnn-ae-graphs/", dataset_name + ".npz"), feat_dim, load_from_txt=False)    
+        dir_path = os.path.dirname(__file__)
+        dataset = TCGNN_dataset(os.path.join(dir_path, "tcgnn-ae-graphs/", dataset_name + ".npz"), feat_dim, load_from_txt=False)    
         features = dataset.x.to(device)
 
     @empty_cache
     def run_sputnik(dataset, features):
-        adj, node_num = None, None
+        adj, node_num, u, v = None, None, None, None
         if USE_DGL_DATASET:
             u, v = dataset.edges()
             node_num = dataset.num_nodes()
@@ -195,7 +201,7 @@ def profile(dataset_name, feat_dim, repeat=1000):
         del dataset, net, u, v, adj, row_offset, edge_idx, adj_, counts, counts_, unique_row_idx
 
     @empty_cache
-    def run_dgl(dataset, feature):
+    def run_dgl(dataset, features):
         g = None
         if USE_DGL_DATASET:
             g = dataset.to(device)
@@ -310,16 +316,16 @@ def profile(dataset_name, feat_dim, repeat=1000):
                             tag="3-mygraph", nvprof=False, repeat=repeat, memory=True, log=log)
         del adj, node_num, adj_, dev_idx, RowWindowOffset, TCOffset, BlockMask, SparseAToX, net
 
-    run_pyg(dataset, features)
+    # run_pyg(dataset, features)
     run_tcgnn(dataset, features)
-    run_mygraph(dataset, features)
-    run_dgl(dataset, features)
+    # run_mygraph(dataset, features)
+    # run_dgl(dataset, features)
     run_sputnik(dataset, features)
 
     return log
 
 if __name__ == '__main__':
-    repeat = int(os.environ.get('REPEAT', 50))
+    repeat = int(os.environ.get('REPEAT', 1000))
     if len(sys.argv) != 3:
         print("usage: python GAT.py [dataset] [feat_dim]")
         exit()
@@ -332,7 +338,7 @@ if __name__ == '__main__':
         #                 'amazon0601':96}
         for d in homo_dataset:
             log[d] = profile(d, homo_dataset[d], repeat)
-        pd.DataFrame(log).to_csv("output/GAT.csv")
+        pd.DataFrame(log).to_csv("examples/AGNN/output/AGNN.csv")
     else:
         profile(sys.argv[1], int(sys.argv[2]), repeat)
 
