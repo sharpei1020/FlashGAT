@@ -81,7 +81,7 @@ __global__ void gat_kernel(
         // float s = max(static_cast<float>(is_init), );
         alpha_sum = alpha_sum + softmax[0][sparse_rowid][1] * __expf(softmax[0][sparse_rowid][0] - alpha_max);
         softmax[0][sparse_rowid][3] = alpha_sum;
-        sparse_A[0][sparse_rowid][shuffled_sparse_colid] = upper / (alpha_sum + 1e-16f);
+        sparse_A[0][sparse_rowid][shuffled_sparse_colid] = upper * __frcp_rn(alpha_sum + 1e-16f);
     }
     asm volatile("cp.async.wait_group 0;\n"::);
     __syncthreads();
@@ -121,7 +121,7 @@ __global__ void gat_kernel(
             // float s = max(static_cast<float>(is_init), );
             alpha_sum = alpha_sum + softmax[cur_rid][sparse_rowid][1] * __expf(softmax[cur_rid][sparse_rowid][0] - alpha_max);
             softmax[cur_rid][sparse_rowid][3] = alpha_sum;
-            sparse_A[cur_rid][sparse_rowid][shuffled_sparse_colid] = upper / (alpha_sum + 1e-16f);
+            sparse_A[cur_rid][sparse_rowid][shuffled_sparse_colid] = upper * __frcp_rn(alpha_sum + 1e-16f);
         }
         //spmm
         {
@@ -129,7 +129,7 @@ __global__ void gat_kernel(
             float s[2];
             for (int j = 0; j < 2; j++) {
                 float is_init = static_cast<float>(softmax_param[j].y > 0.f);
-                s[j] = is_init * __expf(softmax_param[j].x - softmax_param[j].z) * (softmax_param[j].y + 1e-16f) / (softmax_param[j].w + 1e-16f);
+                s[j] = is_init * __expf(softmax_param[j].x - softmax_param[j].z) * (softmax_param[j].y + 1e-16f) * __frcp_rn(softmax_param[j].w + 1e-16f);
 
             }
             for (int j = 0; j < 8; j++) {
@@ -174,7 +174,7 @@ __global__ void gat_kernel(
         float s[2];
         for (int j = 0; j < 2; j++) {
             float is_init = static_cast<float>(softmax_param[j].y > 0.f);
-            s[j] = is_init * __expf(softmax_param[j].x - softmax_param[j].z) * (softmax_param[j].y + 1e-16f) / (softmax_param[j].w + 1e-16f);
+            s[j] = is_init * __expf(softmax_param[j].x - softmax_param[j].z) * (softmax_param[j].y + 1e-16f) * __frcp_rn(softmax_param[j].w + 1e-16f);
 
         }
         for (int j = 0; j < 8; j++) {
@@ -300,7 +300,7 @@ __global__ void gat_balance_kernel(
         // float s = max(static_cast<float>(is_init), );
         alpha_sum = alpha_sum + softmax[0][sparse_rowid][1] * __expf(softmax[0][sparse_rowid][0] - alpha_max);
         softmax[0][sparse_rowid][3] = alpha_sum;
-        sparse_A[0][sparse_rowid][shuffled_sparse_colid] = upper / (alpha_sum + 1e-16f) / 3.f;
+        sparse_A[0][sparse_rowid][shuffled_sparse_colid] = upper * __frcp_rn(alpha_sum + 1e-16f);
     }
     asm volatile("cp.async.wait_group 0;\n"::);
     __syncthreads();
@@ -340,7 +340,7 @@ __global__ void gat_balance_kernel(
             // float s = max(static_cast<float>(is_init), );
             alpha_sum = alpha_sum + softmax[cur_rid][sparse_rowid][1] * __expf(softmax[cur_rid][sparse_rowid][0] - alpha_max);
             softmax[cur_rid][sparse_rowid][3] = alpha_sum;
-            sparse_A[cur_rid][sparse_rowid][shuffled_sparse_colid] = upper / (alpha_sum + 1e-16f) / 3.f;
+            sparse_A[cur_rid][sparse_rowid][shuffled_sparse_colid] = upper * __frcp_rn(alpha_sum + 1e-16f);
         }
         //spmm
         {
@@ -348,7 +348,7 @@ __global__ void gat_balance_kernel(
             float s[2];
             for (int j = 0; j < 2; j++) {
                 float is_init = static_cast<float>(softmax_param[j].y > 0.f);
-                s[j] = is_init * __expf(softmax_param[j].x - softmax_param[j].z) * (softmax_param[j].y + 1e-16f) / (softmax_param[j].w + 1e-16f);
+                s[j] = is_init * __expf(softmax_param[j].x - softmax_param[j].z) * (softmax_param[j].y + 1e-16f) * __frcp_rn(softmax_param[j].w + 1e-16f);
 
             }
             for (int j = 0; j < 8; j++) {
@@ -394,7 +394,7 @@ __global__ void gat_balance_kernel(
         float s[2];
         for (int j = 0; j < 2; j++) {
             float is_init = static_cast<float>(softmax_param[j].y > 0.f);
-            s[j] = is_init * __expf(softmax_param[j].x - softmax_param[j].z) * (softmax_param[j].y + 1e-16f) / (softmax_param[j].w + 1e-16f);
+            s[j] = is_init * __expf(softmax_param[j].x - softmax_param[j].z) * (softmax_param[j].y + 1e-16f) * __frcp_rn(softmax_param[j].w + 1e-16f);
             max_[j] = softmax_param[j].z;
             sum_[j] = softmax_param[j].w;
         }
@@ -448,8 +448,8 @@ __global__ void gat_balance_kernel(
             float alpha0 = __expf(acc_max_i - acc_max_i_1[i]);
             float alpha1 = __expf(max_[i] - acc_max_i_1[i]);
             acc_sum_i_1[i] = acc_sum_i * alpha0 + sum_[i] * alpha1;
-            float beta0 = alpha0 * (acc_sum_i + 1e-16f) / (acc_sum_i_1[i] + 1e-16f);
-            float beta1 = alpha1 * (sum_[i] + 1e-16f) * 3.f / (acc_sum_i_1[i] + 1e-16f); 
+            float beta0 = alpha0 * (acc_sum_i + 1e-16f) * __frcp_rn(acc_sum_i_1[i] + 1e-16f);
+            float beta1 = alpha1 * (sum_[i] + 1e-16f) * __frcp_rn(acc_sum_i_1[i] + 1e-16f); 
             for (int j = 0; j < 4; j++) {
                 float acc_feat = __ldcg(&output[node_id * 64 + warp_id * 16 + j * 4 + warp_col]);
                 __stwb(&output[node_id * 64 + warp_id * 16 + j * 4 + warp_col], acc_feat * beta0 + frag_D[((j&2)+i)*2+(j&1)] * beta1);

@@ -28,11 +28,18 @@ at::Tensor sputnik_GAT(
     cudaMalloc(&a_i, num_edges * sizeof(float));
     cudaMalloc(&a_j, num_edges * sizeof(float));
     cudaMalloc(&alpha, num_edges * sizeof(float));
+    // printf("alpha_i shape[0]: %d, col_idx shape[0]: %d\n", alpha_i.size(0), col_idx.size(0));
     thrust::gather(thrust::device, col_idx.data_ptr<int>(), col_idx.data_ptr<int>() + num_edges,
                 alpha_i.data_ptr<float>(), a_i);
     thrust::gather(thrust::device, row_idx.data_ptr<int>(), row_idx.data_ptr<int>() + num_edges,
                 alpha_j.data_ptr<float>(), a_j);
-    thrust::transform(thrust::device, a_i, a_i + num_edges, a_j, alpha, thrust::plus<float>());
+    // printf("before transform, num_edges: %d\n", num_edges);
+    // float last_a_i, last_a_j;
+    // cudaMemcpy(&last_a_i, a_i + num_edges - 1, sizeof(float), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(&last_a_j, a_j + num_edges - 1, sizeof(float), cudaMemcpyDeviceToHost);
+    // printf("last_a_i: %f, last_a_j: %f\n", last_a_i, last_a_j);
+    thrust::transform(thrust::device, a_i, a_i + num_edges, a_j, alpha, [=]__device__(float a, float b){return a + b;});
+    // printf("after transform\n");
     cudaFree(a_i);
     cudaFree(a_j);
     auto alpha_softmax = torch::empty({num_edges}, feature.options());
