@@ -82,6 +82,20 @@ at::Tensor GAT_balance(
     int out_feats
 );
 
+at::Tensor GAT_short(
+    at::Tensor feature,
+    at::Tensor RowWindowOffsets,
+    at::Tensor SparseAToX,
+    at::Tensor BitMaskRowOffset,
+    at::Tensor BitColMask,
+    at::Tensor BitRowMask,
+    at::Tensor lin_weight,
+    at::Tensor att_i, 
+    at::Tensor att_j,
+    int num_heads,
+    int out_feats
+);
+
 at::Tensor sputnik_GAT(
     at::Tensor feature,
     at::Tensor row_idx,
