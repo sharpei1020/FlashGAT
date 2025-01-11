@@ -405,8 +405,8 @@ at::Tensor AGNN(
 
     int threads = 128;
     int blocks = (num_nodes + 15) / 16;
-    Timer timer;
-    timer.tik();
+    // Timer timer;
+    // timer.tik();
     
     agnn_kernel<<<blocks, threads>>>(
         x.data_ptr<float>(),
@@ -420,9 +420,9 @@ at::Tensor AGNN(
         16,
         8,
         num_nodes);
-    cudaDeviceSynchronize();
-    timer.tok();
-    printf("AGNN time: %f ms\n", timer.get_time());
+    // cudaDeviceSynchronize();
+    // timer.tok();
+    // printf("AGNN time: %f ms\n", timer.get_time());
     // printf("x_norm_size: %d\n", x_norm.size(0));
     return output;
 }
