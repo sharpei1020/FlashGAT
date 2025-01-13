@@ -38,6 +38,7 @@ setup(
             'src/ops/my_kernel/gat_kernel.cu',
             'src/ops/my_kernel/gat_kernel_6.cu',
             'src/ops/my_kernel/agnn_kernel.cu',
+            'src/ops/my_kernel/agnn_udf.cu',
             'src/ops/my_kernel/sputnik_gat_kernel.cu',
             'src/ops/my_kernel/sputnik_agnn_kernel.cu'
         ],
