@@ -1,12 +1,97 @@
 #include <cuda_runtime.h>
 #include <cstdint>
+#include <thrust/sort.h>
+#include "agnn.cuh"
 
 #define FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
 #define BLK_H 16 
 #define BLK_W 8
+#define FULL_MASK 0xffffffff
 
+//softmax(head=1)
+__global__ void softmax_v(const float *__restrict__ features, const int *__restrict__ pointer,
+                          const int *__restrict__ indices, float *__restrict__ next_layer) {
+  int neighbor_offset = pointer[blockIdx.x];
+  int degree = pointer[blockIdx.x + 1] - neighbor_offset;
 
+  float max_local = 0.0f;
+  for (int i = 0; i < degree / 32; i++) {
+    max_local = max(features[indices[neighbor_offset + i * 32 + threadIdx.x]],
+                    max_local);
+  }
+  if (threadIdx.x < degree % 32) {
+    max_local = max(features[indices[neighbor_offset + degree - (degree % 32) +
+                                     threadIdx.x]],
+                    max_local);
+  }
+  for (int offset = 16; offset > 0; offset /= 2) {
+    max_local = max(__shfl_down_sync(FULL_MASK, max_local, offset), max_local);
+  }
+  max_local = __shfl_sync(FULL_MASK, max_local, 0);
 
+  float exp_local = 0.0f;
+  for (int i = 0; i < degree / 32; i++) {
+    exp_local += expf(
+        features[indices[neighbor_offset + i * 32 + threadIdx.x]] - max_local);
+  }
+  if (threadIdx.x < degree % 32) {
+    exp_local += expf(features[indices[neighbor_offset + degree -
+                                       (degree % 32) + threadIdx.x]] -
+                      max_local);
+  }
+  for (int offset = 16; offset > 0; offset /= 2) {
+    exp_local += __shfl_down_sync(FULL_MASK, exp_local, offset);
+  }
+  float sum_exp_local = 1 / __shfl_sync(FULL_MASK, exp_local, 0);
+
+  for (int i = 0; i < degree / 32; i++) {
+    int neighbor = indices[neighbor_offset + i * 32 + threadIdx.x];
+    next_layer[neighbor] = expf(features[neighbor] - max_local) * sum_exp_local;
+  }
+  if (threadIdx.x < degree % 32) {
+    int neighbor =
+        indices[neighbor_offset + degree - (degree % 32) + threadIdx.x];
+    next_layer[neighbor] = expf(features[neighbor] - max_local) * sum_exp_local;
+  }
+  return;
+}
+
+__global__ void reorder_csr_metcf(const float *next_layer, const int* __restrict__ pointer,
+                            const int* __restrict__ edgeToColumn, const int* __restrict__ RowWindow_offset,
+                            float *__restrict__ features, int numNodes) {
+    int element_start = pointer[blockIdx.x*16];
+    int element_end = pointer[min((blockIdx.x+1)*16, numNodes)];
+    int block_start = RowWindow_offset[blockIdx.x];
+    int block_end = RowWindow_offset[blockIdx.x+1];
+    __shared__ uint32_t mask[8];
+    __shared__ int offset[1];
+    if (threadIdx.x == 0)
+        offset[0] = 0;
+    for (int i = block_start; i < block_end; i++) {
+        if ((threadIdx.x & 31) == 0)
+            mask[threadIdx.x >> 5] = 0;
+        for (int j = element_start + threadIdx.x; j < element_end; j += blockDim.x) {
+            int col = edgeToColumn[j];
+            int set = ((col >= 8 * (i - block_start)) && (col < (8 * (i - block_start) + 8))) << (threadIdx.x & 31);
+            for (int k = 1; k < 32; k <<= 1)
+                set |= __shfl_xor_sync(FULL_MASK, set, 2*k-1);
+            mask[threadIdx.x >> 5] = set;
+            __syncthreads();
+            if (set != 0) {
+                int off = __popc(set & ((1<<threadIdx.x&31)-1));
+                for (int l = 0; l < (threadIdx.x >> 5); l++)
+                    off += __popc(mask[l]);
+                features[element_start + offset[0] + off] = next_layer[j];
+            }
+            __syncthreads();
+            if (threadIdx.x == 0)
+                for (int k = 0; k < 4; k++)
+                    offset[0] += __popc(mask[k]);
+        }
+    }
+}
+
+//DTC-SpMM
 __global__ void spmm_forward_cuda_kernel_improved_ptx_1684_uint8_v1_with_value_double_buffer_float4_split(
 	const int *__restrict__ Rowwindow_offset, 		// offset of each row window.
 	const uint8_t *__restrict__ TCblocktile_id, 		// id of each TC block nonzero element.
@@ -246,3 +331,194 @@ __global__ void spmm_forward_cuda_kernel_improved_ptx_1684_uint8_v1_with_value_d
 	}
 }
 
+at::Tensor AGNN_UDF(
+    at::Tensor feature,
+    at::Tensor attention_feat,
+    at::Tensor row_pointers,
+    at::Tensor column_index,
+    at::Tensor edgeToColumn,
+    at::Tensor edgeToRow,
+    at::Tensor Rowwindow_offset,
+    at::Tensor TCblocktile_id,
+    at::Tensor TCblock_offset,
+    at::Tensor sparseAToXidx,
+////////////////////////////////////////////
+    int tag
+) {
+    int num_nodes = feature.size(0);
+    int num_edges = edgeToColumn.size(0);
+    if (tag == 1) {
+        auto next_layer = torch::empty({1, num_edges}, attention_feat.options());
+        softmax_v<<<num_nodes, 32>>>(
+            attention_feat.data_ptr<float>(),
+            row_pointers.data_ptr<int>(),
+            column_index.data_ptr<int>(),
+            next_layer.data_ptr<float>()
+        );
+        int block = (num_nodes + 255) / 256;
+        int thread = 256;
+
+        reorder_csr_metcf<<<block, thread>>>(
+            next_layer.data_ptr<float>(),
+            row_pointers.data_ptr<int>(),
+            edgeToColumn.data_ptr<int>(),
+            Rowwindow_offset.data_ptr<int>(),
+            attention_feat.data_ptr<float>(),
+            num_nodes);
+        return feature;
+    } else if (tag == 2) {
+        int block = (num_nodes + 15) / 16;
+        int thread = 128;
+
+        auto output = torch::empty({num_nodes, 32}, feature.options());
+
+        spmm_forward_cuda_kernel_improved_ptx_1684_uint8_v1_with_value_double_buffer_float4_split<<<block, thread>>>(
+            Rowwindow_offset.data_ptr<int>(), TCblocktile_id.data_ptr<uint8_t>(), TCblock_offset.data_ptr<int>(),
+            sparseAToXidx.data_ptr<int>(), attention_feat.data_ptr<float>(), num_nodes, num_edges, 32, 
+            feature.data_ptr<float>(), output.data_ptr<float>());
+        return output;
+    } else {
+        auto next_layer = torch::empty({1, num_edges}, attention_feat.options());
+        softmax_v<<<num_nodes, 32>>>(
+            attention_feat.data_ptr<float>(),
+            row_pointers.data_ptr<int>(),
+            column_index.data_ptr<int>(),
+            next_layer.data_ptr<float>()
+        );
+        int block = (num_nodes + 255) / 256;
+        int thread = 256;
+
+        reorder_csr_metcf<<<block, thread>>>(
+            next_layer.data_ptr<float>(),
+            row_pointers.data_ptr<int>(),
+            edgeToColumn.data_ptr<int>(),
+            Rowwindow_offset.data_ptr<int>(),
+            attention_feat.data_ptr<float>(),
+            num_nodes);
+
+        block = (num_nodes + 15) / 16;
+        thread = 128;
+
+        auto output = torch::empty({num_nodes, 32}, feature.options());
+
+        spmm_forward_cuda_kernel_improved_ptx_1684_uint8_v1_with_value_double_buffer_float4_split<<<block, thread>>>(
+            Rowwindow_offset.data_ptr<int>(), TCblocktile_id.data_ptr<uint8_t>(), TCblock_offset.data_ptr<int>(),
+            sparseAToXidx.data_ptr<int>(), attention_feat.data_ptr<float>(), num_nodes, num_edges, 32, 
+            feature.data_ptr<float>(), output.data_ptr<float>());
+
+        return output;
+    }
+
+    // auto next_layer = torch::empty({1, num_edges}, attention_feat.options());
+    // softmax_v<<<num_nodes, 32>>>(
+    //     attention_feat.data_ptr<float>(),
+    //     row_pointers.data_ptr<int>(),
+    //     column_index.data_ptr<int>(),
+    //     next_layer.data_ptr<float>()
+    // );
+    // int block = (num_nodes + 255) / 256;
+    // int thread = 256;
+
+    // reorder_csr_metcf<<<block, thread>>>(
+    //     next_layer.data_ptr<float>(),
+    //     row_pointers.data_ptr<int>(),
+    //     edgeToColumn.data_ptr<int>(),
+    //     Rowwindow_offset.data_ptr<int>(),
+    //     attention_feat.data_ptr<float>(),
+    //     num_nodes);
+
+    // block = (num_nodes + 15) / 16;
+    // thread = 128;
+
+    // auto output = torch::empty({num_nodes, 32}, feature.options());
+
+    // spmm_forward_cuda_kernel_improved_ptx_1684_uint8_v1_with_value_double_buffer_float4_split<<<block, thread>>>(
+    //     Rowwindow_offset.data_ptr<int>(), TCblocktile_id.data_ptr<uint8_t>(), TCblock_offset.data_ptr<int>(),
+    //     sparseAToXidx.data_ptr<int>(), attention_feat.data_ptr<float>(), num_nodes, num_edges, 32, 
+    //     feature.data_ptr<float>(), output.data_ptr<float>());
+
+    // return output;
+}  
+
+__global__ void generate_tcoffset_id_atob(
+    int *nodePointer, int *rowwindow_offset, int *edgeToColumn, int *edgeToRow,
+    int *edgeList, int *tcblock_offset, uint8_t *tcblocktile_id,
+    int *sparseatob, int num_nodes, int blockSize_h,
+    int blockSize_w, int num_row_windows) {
+        __shared__ unsigned offset[1]; 
+        __shared__ unsigned mask[8];
+        int tid = threadIdx.x;
+        int winId = blockIdx.x; // each warp one window
+        unsigned block_start = rowwindow_offset[winId];
+        unsigned block_end = rowwindow_offset[min(winId + 1, num_row_windows)];
+        unsigned num_blocks = block_end - block_start;
+        if (num_blocks == 0) 
+            return;
+        int *tcblock_offset_global_ptr = tcblock_offset + block_start;
+        unsigned element_start = nodePointer[winId * blockSize_h];
+        unsigned element_end =
+            nodePointer[min(winId * blockSize_h + blockSize_h, num_nodes)];
+        if (threadIdx.x == 0)
+            offset[0] = 0;
+        __syncthreads();
+        auto tileid = tcblocktile_id + element_start;
+        for (int i = 0; i < num_blocks; i++) {
+            for (unsigned e_index = element_start + tid; e_index < element_end; e_index += blockDim.x) {
+                unsigned col = edgeToColumn[e_index]; // new col
+                if (i == 0)
+                    atomicAdd(tcblock_offset_global_ptr + col / blockSize_w, 1);
+                if ((threadIdx.x&31)==0)
+                    mask[threadIdx.x>>5]=0;
+                int set = ((col >= blockSize_w * i && col < blockSize_w * (i + 1))<<(threadIdx.x&31));
+                for (int j = 1; j < 32; j <<= 1)
+                    set |= __shfl_xor_sync(0xffffffff, set, j*2-1);
+                mask[threadIdx.x>>5] = set;
+                __syncthreads();
+                if (col >= blockSize_w * i && col < blockSize_w * (i + 1)) {
+                    unsigned row_local = edgeToRow[e_index] % blockSize_h;
+                    unsigned col_local = col % blockSize_w;
+                    unsigned off = __popc(set & ((1<<(threadIdx.x&31))-1));
+                    for (int j = 0; j < (threadIdx.x>>5); j++)
+                        off += __popc(mask[j]);
+                    tileid[offset[0]+off] = (uint8_t)(row_local * blockSize_w + col_local);
+                    sparseatob[(block_start + i) * blockSize_w + col_local] = edgeList[e_index];
+                }
+                __syncthreads();
+                if (threadIdx.x == 0)
+                    for (int j = 0; j < 4; j++)
+                        offset[0] += __popc(mask[j]);
+            }
+        }      
+}
+
+std::vector<at::Tensor> DTC_compression(
+    at::Tensor row_pointers,
+    at::Tensor column_index,
+    at::Tensor blockPartition,
+    at::Tensor edgeToColumn,
+    at::Tensor edgeToRow
+) {
+    int num_nodes = row_pointers.size(0) - 1;
+    int num_edges = edgeToColumn.size(0);
+
+    auto RowWindow_offset = torch::empty({blockPartition.size(0) + 1}, blockPartition.options().dtype(torch::kInt));
+    auto TCblocktile_id = torch::empty({num_edges}, blockPartition.options().dtype(torch::kUInt8));
+    cudaMemset(RowWindow_offset.data_ptr<int>(), 0, sizeof(int));
+    thrust::inclusive_scan(thrust::device, blockPartition.data_ptr<int>(), blockPartition.data_ptr<int>() + blockPartition.size(0), 
+        RowWindow_offset.data_ptr<int>() + 1);
+    int block_num;
+    cudaMemcpy(&block_num, RowWindow_offset.data_ptr<int>() + blockPartition.size(0), sizeof(int), cudaMemcpyDeviceToHost);
+    auto TCblock_offset = torch::empty({block_num+1}, blockPartition.options().dtype(torch::kInt));
+    auto sparseAToXidx = torch::empty({block_num*8}, blockPartition.options().dtype(torch::kInt));
+    thrust::fill_n(thrust::device, TCblock_offset.data_ptr<int>(), block_num+1, 0);
+    thrust::fill_n(thrust::device, sparseAToXidx.data_ptr<int>(), block_num*8, num_nodes);
+    int block = (num_nodes + 15) / 16;
+    int thread = 256;
+    generate_tcoffset_id_atob<<<block, thread>>>(
+        row_pointers.data_ptr<int>(), RowWindow_offset.data_ptr<int>(), edgeToColumn.data_ptr<int>(), edgeToRow.data_ptr<int>(),
+        column_index.data_ptr<int>(), TCblock_offset.data_ptr<int>(), TCblocktile_id.data_ptr<uint8_t>(), 
+        sparseAToXidx.data_ptr<int>(), num_nodes, 16, 8, block);
+    thrust::inclusive_scan(thrust::device, TCblock_offset.data_ptr<int>() + 1, TCblock_offset.data_ptr<int>() + block_num+1, 
+        TCblock_offset.data_ptr<int>() + 1);
+    return {RowWindow_offset, TCblock_offset, TCblocktile_id, sparseAToXidx};
+}

@@ -16,6 +16,7 @@ from AGNN_DGL import AGNN_DGL
 from ctypes import cdll
 cdll.LoadLibrary('/home/ljq/mine/graphiler/src/build/sputnik/libsputnik.so')
 from AGNN_MY import MyAGNN, SputnikAGNN
+from AGNN_UDF import UDFAGNN
 import pandas as pd
 import mygraph
 
@@ -28,7 +29,7 @@ from torch_geometric.utils import softmax
 n_heads = 1
 device = setup()
 
-USE_DGL_DATASET = False
+USE_DGL_DATASET = True
 
 # BREAK_FLAG = 2
 
@@ -39,12 +40,12 @@ if USE_DGL_DATASET:
 else:
     from dataset import *
     homo_dataset = {
-                        'citeseer':3703, 'cora':1433, 'pubmed':500, 
-                        'ppi':50, 'PROTEINS_full':29, 'OVCAR-8H':66,
-                        'Yeast':74, 
-                        'DD':89, 'YeastH':75, 'amazon0505':96,
-                        'artist':100, 'com-amazon':96, 'soc-BlogCatalog':128,
-                        'amazon0601':96}
+                    'citeseer':3703, 'cora':1433, 'pubmed':500, 
+                    'ppi':50, 'PROTEINS_full':29, 'OVCAR-8H':66,
+                    'Yeast':74, 
+                    'DD':89, 'YeastH':75, 'amazon0505':96,
+                    'artist':100, 'com-amazon':96, 'soc-BlogCatalog':128,
+                    'amazon0601':96}
 
 class TCGNNFunction_AGNN(torch.autograd.Function):
     @staticmethod
@@ -316,11 +317,73 @@ def profile(dataset_name, feat_dim, repeat=1000):
                             tag="3-mygraph", nvprof=False, repeat=repeat, memory=True, log=log)
         del adj, node_num, adj_, dev_idx, RowWindowOffset, TCOffset, BlockMask, SparseAToX, net
 
+    @empty_cache
+    def run_udf(dataset, features):
+        num_nodes, num_edges, col_idx, row_ptr = None, None, None, None
+        if USE_DGL_DATASET:
+            u, v = dataset.edges()
+            num_nodes = dataset.num_nodes()
+            num_edges = len(u)
+            val = np.array([1] * num_edges, dtype=np.float32)
+            edge_index = np.stack((u, v))
+            scipy_csr = coo_matrix((val, edge_index), shape=(num_nodes, num_nodes)).tocsr()
+            row_ptr = torch.tensor(scipy_csr.indptr)
+            col_idx = torch.tensor(scipy_csr.indices)
+        else:
+            num_nodes = dataset.num_nodes
+            num_edges = dataset.num_edges
+            col_idx =  dataset.column_index 
+            row_ptr = dataset.row_pointers
+        
+        num_row_windows = (num_nodes + 16 - 1) // 16
+        edgeToColumn = torch.zeros(num_edges, dtype=torch.int)
+        edgeToRow = torch.zeros(num_edges, dtype=torch.int)
+        blockPartition = torch.zeros(num_row_windows, dtype=torch.int)
+        TCGNN.preprocess(col_idx, row_ptr, num_nodes,  \
+                         16,	8, blockPartition, edgeToColumn, edgeToRow) 
+        row_ptr = row_ptr.to(device)
+        col_idx = col_idx.to(device)
+        edgeToColumn = edgeToColumn.to(device)
+        edgeToRow = edgeToRow.to(device)
+        blockPartition = blockPartition.to(device)
+
+        RowWindow_offset, TCblock_offset, TCblocktile_id, sparseAToidx = mygraph.DTC_compression(
+            row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow)
+        
+        net = UDFAGNN(feat_dim, DIM, DIM).to(device)
+        net.eval()
+############################################
+        mid_edge_feature, mid_softmax = None, None
+        out_feat = net.get_submodule("lin1")(features)
+        x_prime = F.normalize(out_feat, p=2, dim=1)
+        edge_feature = TCGNN.forward_ef(x_prime, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow)[0]
+        mid_edge_feature = torch.mm(edge_feature.unsqueeze(-1), torch.ones((1, 1), device=device)).transpose(0,1).contiguous()
+        mid_softmax = softmax(mid_edge_feature.squeeze(), edgeToRow.to(torch.int64), row_ptr.to(torch.int64), len(row_ptr)-1).reshape(1, -1)
+############################################
+        with torch.no_grad():
+            bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, (-1, None)), tag="UDF", nvprof=False, 
+                repeat=repeat, memory=True, log=log)
+            bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, (0, None)), tag="UDF", nvprof=False, 
+                repeat=repeat, memory=True, log=log)
+            bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, (1, mid_edge_feature)), tag="UDF", nvprof=False, 
+                repeat=repeat, memory=True, log=log)
+            bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, (2, mid_softmax)), tag="UDF", nvprof=False, 
+                repeat=repeat, memory=True, log=log)
+            bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, (3, None)), tag="UDF", nvprof=False, 
+                repeat=repeat, memory=True, log=log)
+        del num_nodes, num_edges, row_ptr, col_idx, num_row_windows, edgeToColumn, edgeToRow, blockPartition, net, mid_edge_feature, mid_softmax
+
     # run_pyg(dataset, features)
-    run_tcgnn(dataset, features)
+    # run_tcgnn(dataset, features)
     # run_mygraph(dataset, features)
     # run_dgl(dataset, features)
-    run_sputnik(dataset, features)
+    # run_sputnik(dataset, features)
+    run_udf(dataset, features)
 
     return log
 
