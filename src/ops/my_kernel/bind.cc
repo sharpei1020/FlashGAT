@@ -11,6 +11,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("agnn", &AGNN, "agnn");
     m.def("agnn_udf", &AGNN_UDF, "agnn_udf");
     m.def("agnn_short", &AGNN_short, "agnn_short");
+    m.def("SDDMM", &SDDMM, "SDDMM");
+    m.def("SDDMM_TCGNN", &SDDMM_TCGNN, "SDDMM_TCGNN");
+    m.def("agnn_divide", &AGNN_divide, "AGNN_divide");
     m.def("gcn", &GCN, "gcn");
     m.def("gat", &GAT, "gat");
     m.def("gat_balance", &GAT_balance, "gat_balance");
@@ -22,6 +25,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("get_graph_set", &get_graph_set, "get_graph_set");
     m.def("process_DTC", &process_DTC, "process_DTC");
     m.def("process_DTC_short_mask", &process_DTC_short_mask, "process_DTC_short_mask");
+    m.def("SGT_short_Mask", &SGT_short_Mask, "SGT_short_Mask");
     m.def("DTC_compression", &DTC_compression, "DTC_compression");
     m.def("reorder", &rabbit_reorder, "Get the reordered node id mapping: old_id --> new_id");
 }

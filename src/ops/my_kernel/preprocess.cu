@@ -407,7 +407,7 @@ std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_
     auto new_end = thrust::reduce_by_key(thrust::device, rowwindow_value, unique_rowwindow_end.second, 
                             RowWindowMask, unique_rowwindow_value, RowWindowNum_temp, thrust::equal_to<int>(), 
                             thrust::plus<int>());
-    int RowWindowNum_temp_len = new_end.second - RowWindowNum_temp;
+    // int RowWindowNum_temp_len = new_end.second - RowWindowNum_temp;
     // printf("current RowWindowNum_temp_len: %d\n", RowWindowNum_temp_len);
     cudaMalloc(&RowWindowNum, (num_nodes + block_high - 1) / block_high * sizeof(int));
     thrust::fill_n(thrust::device, RowWindowNum, (num_nodes + block_high - 1) / block_high, 0);
@@ -425,15 +425,20 @@ std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_
     cudaMalloc(&align_offset, (num_nodes + block_high - 1) / block_high * sizeof(int));
     cudaMalloc(&align_idx, rowwindow_value_len * sizeof(int));
     thrust::fill_n(thrust::device, align_idx, rowwindow_value_len, 0);
+    // printf("rowwindow_value_len: %d, SparseAidx_temp_len: %d\n", rowwindow_value_len, unique_rowwindow_end.first-SparseAidx_temp);
     // printf("RowWindowNum_temp_len: %d, align_offset_len: %d\n", new_end.second - RowWindowNum_temp, (num_nodes + block_high - 1) / block_high);
     thrust::transform(thrust::device, RowWindowNum_temp, new_end.second, align_offset, 
                     [=]__device__(int x) {return (x + block_width - 1) / block_width * block_width - x;});
     // printf("after getting align_offset\n");
     thrust::inclusive_scan(thrust::device, RowWindowNum_temp, new_end.second, RowWindowNum_temp);
-    // printf("after getting RowWindowNum_temp\n");
-    thrust::scatter(thrust::device, align_offset, align_offset + (num_nodes + block_high - 1) / block_high, 
+    // int last_WindowNum_temp;
+    // cudaMemcpy(&last_WindowNum_temp, new_end.second-1, sizeof(int), cudaMemcpyDeviceToHost);
+    // printf("after last RowWindowNum_temp: %d\n", last_WindowNum_temp);
+    thrust::scatter(thrust::device, align_offset, align_offset + (num_nodes + block_high - 1) / block_high - 1, 
                     RowWindowNum_temp, align_idx);
+    // printf("after scatter.\n");
     thrust::inclusive_scan(thrust::device, align_idx, align_idx + rowwindow_value_len, align_idx);
+    // printf("after inclusive_scan.\n");
     thrust::transform(thrust::device, align_idx, align_idx + rowwindow_value_len, SparseAidx_temp, align_idx,
                     [=]__device__(int x0, int x1) {return (x0 + x1 - 1);});
     // printf("after getting align_idx\n");
@@ -500,4 +505,146 @@ std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_
     return {RowWindowOffset, BitMask_RowOffset, BitMask_col, BitMask_row, SparseAToX};
 }
 
+__global__ void sgt_short_mask_kernel(
+    const int* __restrict__ row_pointers,
+    const int* __restrict__ column_index,
+    const int* __restrict__ RowWindowOffset,
+    const int* __restrict__ edgeToColumn,
+    const int* __restrict__ edgeToRow,
+    int* __restrict__ BitMask_RowOffset,
+    uint8_t* __restrict__ BitMask_col,
+    int* __restrict__ SparseAToX,
+    int block_high,
+    int block_width,
+    int node_num
+) {
+    int bid = blockIdx.x;
+    int element_start = row_pointers[bid*16];
+    int elemnet_end = row_pointers[min(bid*16+16, node_num)];
+    int block_start = RowWindowOffset[bid];
+    int block_end = RowWindowOffset[bid+1];
+    int col_num = block_high / 8;
+    int row_num = block_width / 8;
+    __shared__ uint8_t col_mask[4];
+    __shared__ uint8_t row_mask[64];
+    for (int i = 0; i < (block_end - block_start); i++) {
+        if(threadIdx.x < col_num) {
+            col_mask[threadIdx.x] = 0;
+        }
+        if (threadIdx.x < row_num * block_high) {
+            row_mask[threadIdx.x] = 0;
+        }
+        __syncthreads();
+        for (int idx = element_start + threadIdx.x; idx < elemnet_end; idx += blockDim.x) {
+            int col = edgeToColumn[idx];
+            if (col >= i * block_width && col < (i+1) * block_width) {
+                int local_row = edgeToRow[idx] % block_high;
+                atomicOr((uint32_t*)&col_mask[0], (1<<local_row));
+                int local_col = edgeToColumn[idx] % block_width;
+                SparseAToX[(i+block_start)*block_width+local_col] = column_index[idx];
+                int col = (local_row * block_width + local_col) & 31;
+                int row = (local_row * block_width + local_col) >> 5;
+                atomicOr((uint32_t*)&row_mask[row*4], (1<<col));
+            }
+        }
+        __syncthreads();
+        if(threadIdx.x < col_num) {
+            BitMask_col[(block_start+i)*col_num+threadIdx.x] = col_mask[threadIdx.x];
+        }
+        int row_num = __popc(*(uint32_t*)&col_mask[0]);
+        BitMask_RowOffset[block_start+i+1] = row_num;
+    }
+}
 
+__global__ void gen_rowmask_kernel(
+    const int* __restrict__ row_pointers,
+    const int* __restrict__ column_index,
+    const int* __restrict__ RowWindowOffset,
+    const int* __restrict__ edgeToColumn,
+    const int* __restrict__ edgeToRow,
+    const int* __restrict__ BitMask_RowOffset,
+    const uint8_t* __restrict__ BitMask_col,
+    uint8_t* __restrict__ BitMask_row,
+    int block_high,
+    int block_width,
+    int node_num
+){
+    int bid = blockIdx.x;
+    int element_start = row_pointers[bid*16];
+    int elemnet_end = row_pointers[min(bid*16+16, node_num)];
+    int block_start = RowWindowOffset[bid];
+    int block_end = RowWindowOffset[bid+1];
+    int col_num = block_high / 8;
+    int row_num = block_width / 8;
+    __shared__ uint8_t row_mask[64];
+    __shared__ uint8_t col_mask[4];
+    for (int i = 0; i < (block_end - block_start); i++) {
+        if (threadIdx.x < row_num * block_high) {
+            row_mask[threadIdx.x] = 0;
+        }
+        __syncthreads();
+        for (int idx = element_start + threadIdx.x; idx < elemnet_end; idx += blockDim.x) {
+            int col = edgeToColumn[idx];
+            if (col >= i * block_width && col < (i+1) * block_width) {
+                int local_row = edgeToRow[idx] % block_high;
+                int col = (local_row * block_width + col) & 31;
+                int row = (local_row * block_width + col) >> 5;
+                atomicOr((uint32_t*)&row_mask[row*4], (1<<col));
+            }
+        }
+        if (threadIdx.x < col_num) 
+            col_mask[threadIdx.x] = BitMask_col[(block_start+i)*col_num+threadIdx.x];
+        __syncthreads();
+        if (threadIdx.x < row_num * block_high) {
+            int row = threadIdx.x / row_num;
+            int offset = __popc(*(uint32_t*)&col_mask[0]&((1<<row)-1));
+            if (*(uint32_t*)&col_mask[0]&(1<<row))
+                BitMask_row[BitMask_RowOffset[block_start+i]+offset] = row_mask[threadIdx.x];
+        }
+    }
+}
+
+std::vector<at::Tensor> SGT_short_Mask(
+    at::Tensor row_pointers,
+    at::Tensor column_index,
+    at::Tensor blockPartition,
+    at::Tensor edgeToColumn,
+    at::Tensor edgeToRow,
+    int block_high,
+    int block_width
+) {
+    int num_nodes = row_pointers.size(0) - 1;
+    int num_edges = column_index.size(0);
+
+    auto RowWindowOffset = at::empty({1+blockPartition.size(0)}, blockPartition.options().dtype(torch::kInt));
+    cudaMemset(RowWindowOffset.data_ptr<int>(), 0, sizeof(int));
+    thrust::inclusive_scan(thrust::device, blockPartition.data_ptr<int>(), blockPartition.data_ptr<int>() + blockPartition.size(0), 
+                            RowWindowOffset.data_ptr<int>() + 1);
+    int block_num;
+    cudaMemcpy(&block_num, RowWindowOffset.data_ptr<int>() + blockPartition.size(0), sizeof(int), cudaMemcpyDeviceToHost);
+    auto BitMask_RowOffset = at::empty({block_num+1}, blockPartition.options().dtype(torch::kInt));
+    int row_num = block_high / 8;
+    auto BitMask_col = at::empty({row_num*block_num}, device(torch::kCUDA).dtype(torch::kUInt8));
+    auto SparseAToX = at::empty({block_num*block_width}, device(torch::kCUDA).dtype(torch::kInt));
+    thrust::fill_n(thrust::device, SparseAToX.data_ptr<int>(), block_num*block_width, num_nodes);
+    cudaMemset(BitMask_RowOffset.data_ptr<int>(), 0, sizeof(int));
+    int blocks = (num_nodes + 15) / 16;
+    sgt_short_mask_kernel<<<blocks, 128>>>(
+        row_pointers.data_ptr<int>(), column_index.data_ptr<int>(), 
+        RowWindowOffset.data_ptr<int>(), edgeToColumn.data_ptr<int>(), 
+        edgeToRow.data_ptr<int>(), BitMask_RowOffset.data_ptr<int>(), 
+        BitMask_col.data_ptr<uint8_t>(), SparseAToX.data_ptr<int>(),
+        block_high, block_width, num_nodes);
+    thrust::inclusive_scan(thrust::device, BitMask_RowOffset.data_ptr<int>()+1, BitMask_RowOffset.data_ptr<int>()+1+block_num, 
+                            BitMask_RowOffset.data_ptr<int>()+1);
+    int row_mask_num;
+    cudaMemcpy(&row_mask_num, BitMask_RowOffset.data_ptr<int>()+block_num, sizeof(int), cudaMemcpyDeviceToHost);
+    auto BitMask_row = at::empty({row_mask_num}, device(torch::kCUDA).dtype(torch::kUInt8));
+    gen_rowmask_kernel<<<blocks, 128>>>(
+        row_pointers.data_ptr<int>(), column_index.data_ptr<int>(), 
+        RowWindowOffset.data_ptr<int>(), edgeToColumn.data_ptr<int>(), 
+        edgeToRow.data_ptr<int>(), BitMask_RowOffset.data_ptr<int>(), 
+        BitMask_col.data_ptr<uint8_t>(), BitMask_row.data_ptr<uint8_t>(),
+        block_high, block_width, num_nodes);
+    return {RowWindowOffset, BitMask_RowOffset, BitMask_col, BitMask_row, SparseAToX};
+}

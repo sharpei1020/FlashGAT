@@ -10,18 +10,18 @@
 
 //softmax(head=1)
 __global__ void softmax_v(const float *__restrict__ features, const int *__restrict__ pointer,
-                          const int *__restrict__ indices, float *__restrict__ next_layer) {
+                         float *__restrict__ next_layer) {
   int neighbor_offset = pointer[blockIdx.x];
   int degree = pointer[blockIdx.x + 1] - neighbor_offset;
 
   float max_local = 0.0f;
   for (int i = 0; i < degree / 32; i++) {
-    max_local = max(features[indices[neighbor_offset + i * 32 + threadIdx.x]],
+    max_local = max(features[neighbor_offset + i * 32 + threadIdx.x],
                     max_local);
   }
   if (threadIdx.x < degree % 32) {
-    max_local = max(features[indices[neighbor_offset + degree - (degree % 32) +
-                                     threadIdx.x]],
+    max_local = max(features[neighbor_offset + degree - (degree % 32) +
+                                     threadIdx.x],
                     max_local);
   }
   for (int offset = 16; offset > 0; offset /= 2) {
@@ -32,11 +32,11 @@ __global__ void softmax_v(const float *__restrict__ features, const int *__restr
   float exp_local = 0.0f;
   for (int i = 0; i < degree / 32; i++) {
     exp_local += expf(
-        features[indices[neighbor_offset + i * 32 + threadIdx.x]] - max_local);
+        features[neighbor_offset + i * 32 + threadIdx.x] - max_local);
   }
   if (threadIdx.x < degree % 32) {
-    exp_local += expf(features[indices[neighbor_offset + degree -
-                                       (degree % 32) + threadIdx.x]] -
+    exp_local += expf(features[neighbor_offset + degree -
+                                       (degree % 32) + threadIdx.x] -
                       max_local);
   }
   for (int offset = 16; offset > 0; offset /= 2) {
@@ -45,12 +45,11 @@ __global__ void softmax_v(const float *__restrict__ features, const int *__restr
   float sum_exp_local = 1 / __shfl_sync(FULL_MASK, exp_local, 0);
 
   for (int i = 0; i < degree / 32; i++) {
-    int neighbor = indices[neighbor_offset + i * 32 + threadIdx.x];
+    int neighbor = neighbor_offset + i * 32 + threadIdx.x;
     next_layer[neighbor] = expf(features[neighbor] - max_local) * sum_exp_local;
   }
   if (threadIdx.x < degree % 32) {
-    int neighbor =
-        indices[neighbor_offset + degree - (degree % 32) + threadIdx.x];
+    int neighbor = neighbor_offset + degree - (degree % 32) + threadIdx.x;
     next_layer[neighbor] = expf(features[neighbor] - max_local) * sum_exp_local;
   }
   return;
@@ -347,12 +346,11 @@ at::Tensor AGNN_UDF(
 ) {
     int num_nodes = feature.size(0);
     int num_edges = edgeToColumn.size(0);
-    if (tag == 1) {
+    if (tag == 3) {
         auto next_layer = torch::empty({1, num_edges}, attention_feat.options());
         softmax_v<<<num_nodes, 32>>>(
             attention_feat.data_ptr<float>(),
             row_pointers.data_ptr<int>(),
-            column_index.data_ptr<int>(),
             next_layer.data_ptr<float>()
         );
         int block = (num_nodes + 255) / 256;
@@ -366,7 +364,7 @@ at::Tensor AGNN_UDF(
             attention_feat.data_ptr<float>(),
             num_nodes);
         return feature;
-    } else if (tag == 2) {
+    } else if (tag == 4) {
         int block = (num_nodes + 15) / 16;
         int thread = 128;
 
@@ -382,7 +380,6 @@ at::Tensor AGNN_UDF(
         softmax_v<<<num_nodes, 32>>>(
             attention_feat.data_ptr<float>(),
             row_pointers.data_ptr<int>(),
-            column_index.data_ptr<int>(),
             next_layer.data_ptr<float>()
         );
         int block = (num_nodes + 255) / 256;
