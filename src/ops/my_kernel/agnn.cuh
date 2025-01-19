@@ -56,3 +56,35 @@ std::vector<at::Tensor> DTC_compression(
     at::Tensor edgeToColumn,
     at::Tensor edgeToRow
 );
+
+at::Tensor SDDMM(
+    at::Tensor feature,
+    at::Tensor row_pointers,
+    at::Tensor RowWindowOffsets,
+    at::Tensor SparseAToX,
+    at::Tensor BitMaskRowOffset,
+    at::Tensor BitColMask,
+    at::Tensor BitRowMask,
+    at::Tensor beta
+);
+
+at::Tensor SDDMM_TCGNN(
+    at::Tensor feature,
+    at::Tensor row_pointers,
+    at::Tensor column_index,
+    at::Tensor blockPartition,
+    at::Tensor edgeToColumn,
+    at::Tensor edgeToRow,
+    at::Tensor beta
+);
+
+at::Tensor AGNN_divide(
+    at::Tensor feature,
+    at::Tensor row_pointers,
+    at::Tensor RowWindowOffsets,
+    at::Tensor SparseAToX,
+    at::Tensor BitMaskRowOffset,
+    at::Tensor BitColMask,
+    at::Tensor BitRowMask,
+    at::Tensor beta
+);

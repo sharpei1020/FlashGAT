@@ -10,3 +10,6 @@ std::vector<at::Tensor> get_graph_set(at::Tensor edge_index, int numwarps, int n
 std::vector<torch::Tensor> process_DTC(at::Tensor edge_index, at::Tensor dev_idx, int block_high, int block_width, int num_nodes, bool balance);
 
 std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_high, int block_width, int num_nodes, bool balance);
+
+std::vector<at::Tensor> SGT_short_Mask(at::Tensor row_pointers, at::Tensor column_index, at::Tensor blockPartition, at::Tensor edgeToColumn,
+    at::Tensor edgeToRow, int block_high, int block_width);
