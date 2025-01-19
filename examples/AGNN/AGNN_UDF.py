@@ -27,31 +27,43 @@ class UDFAGNNlayer(nn.Module):
                 column_index, blockPartition, 
                 edgeToColumn, edgeToRow, 
                 RowWindow_offset, TCblocktile_id,
-                TCblock_offset, saprseAToXidx, select_params):
+                TCblock_offset, saprseAToXidx, 
+                BitMask_RowOffset, BitMask_col, 
+                BitMask_row, select_params):
         select_id, edge_attentions = select_params[0], select_params[1]
-        # print(select_id, edge_attentions)
-        if select_id == -1:
+        if select_id.value == 0:
+            x_norm = torch.norm(x, 2, -1).clamp_min(1e-12)
             return x
-        elif select_id == 0:
-            x_prime = F.normalize(x, p=2, dim=1)
-            edge_feature = TCGNN.forward_ef(x_prime, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow)[0]
-            edge_attentions = torch.mm(edge_feature.unsqueeze(-1), self.beta.unsqueeze(0)).transpose(0,1).contiguous()
+        elif select_id.value == 1:
+            # x_prime = F.normalize(x, p=2, dim=1)
+            # edge_feature = TCGNN.forward_ef(x_prime, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow)[0]
+            # edge_attentions = torch.mm(edge_feature.unsqueeze(-1), self.beta.unsqueeze(0)).transpose(0,1).contiguous()
+            edge_attentions = mygraph.SDDMM_TCGNN(x, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, self.beta)
             return x
-        elif select_id >= 1 and select_id < 3:
+        elif select_id.value == 2:
+            edge_attentions = mygraph.SDDMM(x, row_pointers, RowWindow_offset, saprseAToXidx, BitMask_RowOffset, BitMask_col, 
+                BitMask_row, self.beta)
+            return x
+        elif select_id.value >= 3 and select_id.value < 5:
             return mygraph.agnn_udf(x, edge_attentions,
                                     row_pointers, column_index,
                                     edgeToColumn, edgeToRow,
                                     RowWindow_offset, TCblocktile_id,
-                                    TCblock_offset, saprseAToXidx, select_id)
+                                    TCblock_offset, saprseAToXidx, select_id.value)
+        elif select_id.value == 5:
+            # x_prime = F.normalize(x, p=2, dim=1)
+            # edge_feature = TCGNN.forward_ef(x_prime, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow)[0]
+            # edge_attentions = torch.mm(edge_feature.unsqueeze(-1), self.beta.unsqueeze(0)).transpose(0,1).contiguous()
+            edge_attentions = mygraph.SDDMM(x, row_pointers, RowWindow_offset, saprseAToXidx, BitMask_RowOffset, BitMask_col, 
+                BitMask_row, self.beta)
+            return mygraph.agnn_udf(x, edge_attentions,
+                                    row_pointers, column_index,
+                                    edgeToColumn, edgeToRow,
+                                    RowWindow_offset, TCblocktile_id,
+                                    TCblock_offset, saprseAToXidx, select_id.value)
         else:
-            x_prime = F.normalize(x, p=2, dim=1)
-            edge_feature = TCGNN.forward_ef(x_prime, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow)[0]
-            edge_attentions = torch.mm(edge_feature.unsqueeze(-1), self.beta.unsqueeze(0)).transpose(0,1).contiguous()
-            return mygraph.agnn_udf(x, edge_attentions,
-                                    row_pointers, column_index,
-                                    edgeToColumn, edgeToRow,
-                                    RowWindow_offset, TCblocktile_id,
-                                    TCblock_offset, saprseAToXidx, select_id)
+            return mygraph.agnn_divide(x, row_pointers, RowWindow_offset, saprseAToXidx, 
+                                        BitMask_RowOffset, BitMask_col, BitMask_row, self.beta)
     
 class UDFAGNN(nn.Module):
     def __init__(self, 
@@ -65,10 +77,12 @@ class UDFAGNN(nn.Module):
         self.relu = nn.ReLU(True)
 
     def forward(self, x, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, 
-                RowWindowOffset, TCblocktile_id, TCblock_offset, saprseAToXidx, select_params): 
+                RowWindowOffset, TCblocktile_id, TCblock_offset, saprseAToXidx, BitMask_RowOffset, 
+                BitMask_col, BitMask_row, select_params): 
         x = self.relu(self.lin1(x))
         for conv in self.convs:
             x = self.relu(conv(x, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, 
-                RowWindowOffset, TCblocktile_id, TCblock_offset, saprseAToXidx, select_params))
+                RowWindowOffset, TCblocktile_id, TCblock_offset, saprseAToXidx, BitMask_RowOffset, 
+                BitMask_col, BitMask_row,select_params))
         x = self.lin2(x)
         return x

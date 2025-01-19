@@ -15,7 +15,7 @@ from AGNN_PyG import AGNN_PyG
 from AGNN_DGL import AGNN_DGL
 from ctypes import cdll
 cdll.LoadLibrary('/home/ljq/mine/graphiler/src/build/sputnik/libsputnik.so')
-from AGNN_MY import MyAGNN, SputnikAGNN
+from AGNN_MY import MyAGNN, SputnikAGNN, MyAGNN_new
 from AGNN_UDF import UDFAGNN
 import pandas as pd
 import mygraph
@@ -160,6 +160,16 @@ class TC_AGNN(torch.nn.Module):
         return X
 
 DIM = 32
+
+from enum import Enum
+class udf_type(Enum):
+    Base = 0
+    SDDMM_TCGNN = 1
+    SDDMM_MY = 2
+    Softmax = 3
+    SpMM = 4
+    ALL = 5
+    ALL_MINE = 6
 
 def profile(dataset_name, feat_dim, repeat=1000):
     log = init_log(["1-PyG-primitives", "2-TCGNN-primitives", "3-mygraph", "4-DGL-primitives", "5-Sputnik-primitives"],
@@ -349,6 +359,11 @@ def profile(dataset_name, feat_dim, repeat=1000):
 
         RowWindow_offset, TCblock_offset, TCblocktile_id, sparseAToidx = mygraph.DTC_compression(
             row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow)
+        RowWindowOffset, BitMask_RowOffset, BitMask_col, BitMask_row, sparseAToX = mygraph.SGT_short_Mask(
+            row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow, 16, 8)
+        
+        assert(RowWindow_offset.equal(RowWindowOffset))
+        assert(sparseAToidx.equal(sparseAToX))
         
         net = UDFAGNN(feat_dim, DIM, DIM).to(device)
         net.eval()
@@ -362,28 +377,62 @@ def profile(dataset_name, feat_dim, repeat=1000):
 ############################################
         with torch.no_grad():
             bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
-                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, (-1, None)), tag="UDF", nvprof=False, 
+                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
+                BitMask_row, (udf_type.Base, None)), tag="UDF-base", nvprof=False, 
                 repeat=repeat, memory=True, log=log)
             bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
-                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, (0, None)), tag="UDF", nvprof=False, 
+                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
+                BitMask_row, (udf_type.SDDMM_TCGNN, None)), tag="UDF-SDDMM_TCGNN", nvprof=False, 
                 repeat=repeat, memory=True, log=log)
             bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
-                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, (1, mid_edge_feature)), tag="UDF", nvprof=False, 
+                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
+                BitMask_row, (udf_type.SDDMM_MY, None)), tag="UDF-SDDMM_MY", nvprof=False, 
                 repeat=repeat, memory=True, log=log)
-            bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
-                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, (2, mid_softmax)), tag="UDF", nvprof=False, 
-                repeat=repeat, memory=True, log=log)
-            bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
-                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, (3, None)), tag="UDF", nvprof=False, 
-                repeat=repeat, memory=True, log=log)
-        del num_nodes, num_edges, row_ptr, col_idx, num_row_windows, edgeToColumn, edgeToRow, blockPartition, net, mid_edge_feature, mid_softmax
+            # bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+            #     RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
+            #     BitMask_row, (udf_type.Softmax, mid_edge_feature)), tag="UDF-softmax", nvprof=False, 
+            #     repeat=repeat, memory=True, log=log)
+            # bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+            #     RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
+            #     BitMask_row, (udf_type.SpMM, mid_softmax)), tag="UDF-DTC_SpMM", nvprof=False, 
+            #     repeat=repeat, memory=True, log=log)
+            # bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+            #     RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
+            #     BitMask_row, (udf_type.ALL, None)), tag="UDF-ALL", nvprof=False, 
+            #     repeat=repeat, memory=True, log=log)
+            # bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+            #     RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
+            #     BitMask_row, (udf_type.ALL_MINE, None)), tag="UDF-ALL_MINE", nvprof=False, 
+            #     repeat=repeat, memory=True, log=log)
+        del num_nodes, num_edges, row_ptr, col_idx, num_row_windows, edgeToColumn, edgeToRow, blockPartition, \
+        net, mid_edge_feature, mid_softmax, RowWindowOffset, BitMask_RowOffset, BitMask_col, BitMask_row, sparseAToX
 
+    @empty_cache
+    def run_myagnn_new(dataset, features):
+        adj, node_num = None, None
+        if USE_DGL_DATASET:
+            u, v = dataset.edges()
+            node_num = dataset.num_nodes()
+            adj = torch.vstack([u, v]).type(torch.IntTensor)
+        else:
+            adj = torch.IntTensor(dataset.edge_index).contiguous()
+            node_num = dataset.num_nodes.item(0)
+        self = torch.vstack([torch.arange(0, node_num).type(torch.IntTensor)] * 2).to(device)
+        adj_ = torch.unique(torch.torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
+        RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX = mygraph.process_DTC_short_mask(adj_, 16, 16, node_num, False)
+        net = MyAGNN_new(feat_dim, DIM, DIM).to(device)
+        net.eval()
+        with torch.no_grad():
+            bench(net=net, net_params=(features, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask), 
+                    tag="3-myagnn_new", nvprof=False, repeat=repeat, memory=True, log=log)
+        del adj, node_num, adj_, RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX, net
     # run_pyg(dataset, features)
     # run_tcgnn(dataset, features)
     # run_mygraph(dataset, features)
     # run_dgl(dataset, features)
     # run_sputnik(dataset, features)
-    run_udf(dataset, features)
+    # run_udf(dataset, features)
+    run_myagnn_new(dataset, features)
 
     return log
 

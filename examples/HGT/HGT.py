@@ -264,9 +264,13 @@ def profile(dataset, feat_dim, repeat=1000):
                                 DEFAULT_DIM, g.num_ntypes, g.num_rels, mode='slice').to(device)
         net_pyg_slice.eval()
         # print(g.edata['_ID'][g.edata['_TYPE'] == 103])
+        # print(g.num_ntypes, g.num_rels, src_type, dst_type)
+        for i in range(g.num_ntypes):
+            idxs = torch.nonzero(g.ndata['_TYPE'] == 0)
+            assert(len(idxs) == idxs[-1] - idxs[0] + 1)
         with torch.no_grad():
             bench(net=net_pyg_slice, net_params=(adj, features, g.edata['_TYPE'], g.ndata['_TYPE'], src_type, dst_type),
-                  tag="6-myght-slice", nvprof=False, repeat=repeat, memory=True, log=log)
+                  tag="6-myhgt-slice", nvprof=False, repeat=repeat, memory=True, log=log)
         del u, v, adj, src_type, dst_type, net_pyg_slice 
 
     def run_my_bmm(g, features):
@@ -279,15 +283,15 @@ def profile(dataset, feat_dim, repeat=1000):
         net_pyg_bmm.eval()
         with torch.no_grad():
             bench(net=net_pyg_bmm, net_params=(adj, features, g.edata['_TYPE'].to(device), g.ndata['_TYPE'].to(device), src_type, dst_type),
-                  tag="7-myght-bmm", nvprof=False, repeat=repeat, memory=True, log=log)
+                  tag="7-myhgt-bmm", nvprof=False, repeat=repeat, memory=True, log=log)
         del u, v, adj, src_type, dst_type, net_pyg_bmm
 
-    run_baseline_graphiler(g, features)
-    run_dgl_slice(g_hetero, features)
-    run_pyg_bmm(g, features)
-    run_pyg_slice(g, features)
+    # run_baseline_graphiler(g, features)
+    # run_dgl_slice(g_hetero, features)
+    # run_pyg_bmm(g, features)
+    # run_pyg_slice(g, features)
     run_my_slice(g, features)
-    run_my_bmm(g, features)
+    # run_my_bmm(g, features)
 
     return log
 
