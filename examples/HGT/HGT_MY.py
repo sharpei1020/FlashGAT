@@ -66,20 +66,31 @@ class  MyHGTLayerSlice(nn.Module):
     
     def forward(self, h, adj, edge_type, node_type, src_type, dst_type):
         out = 0
-        for i in range(self.num_rels):
-            tmp = masked_edge_index(adj, edge_type == i)
-            # print(tmp.shape[-1])
-            src_ntype = src_type[i]
-            dst_ntype = dst_type[i]
+        k_whole = (h.unsqueeze(1) @ self.k_weights[node_type]).squeeze(1)
+        v_whole = (h.unsqueeze(1) @ self.v_weights[node_type]).squeeze(1)
+        q_whole = (h.unsqueeze(1) @ self.q_weights[node_type]).squeeze(1)
+        data = self._collect(['k_j', 'v_j', 'q_i'], edge_index = adj, 
+                            size=[None, None], k=k_whole, v=v_whole, q=q_whole)
+        print(data)
+        out_ = self.message2(data['k_j'], data['v_j'], data['q_i'], 
+                           data['index'], data['size_i'], edge_type)
+        print(out_)
+        out_ = self.aggr_module(out_, data['index'], dim_size=data['dim_size'])
+        # for i in range(self.num_rels):
+        #     tmp = masked_edge_index(adj, edge_type == i)
+        #     src_ntype = src_type[i]
+        #     dst_ntype = dst_type[i]
 
-            k = h @ self.k_weights[src_ntype]
-            v = h @ self.v_weights[src_ntype]
-            q = h @ self.q_weights[dst_ntype]
-            k = k @ self.relation_att[i]
-            v = v @ self.relation_msg[i]
-            out_i = self.propagate(
-                tmp, k=k, v=v, q=q, rel_pri=self.relation_pri[i])
-            out = out + out_i
+        #     k = h @ self.k_weights[src_ntype]
+        #     v = h @ self.v_weights[src_ntype]
+        #     q = h @ self.q_weights[dst_ntype]
+        #     k = k @ self.relation_att[i]
+        #     v = v @ self.relation_msg[i]
+        #     out_i = self.propagate(
+        #         tmp, k=k, v=v, q=q, rel_pri=self.relation_pri[i])
+        #     out = out + out_i
+        print(out_)
+        assert torch.equal(out_, out)
 
         out = self.upd(out, node_type)
         return out
@@ -137,6 +148,13 @@ class  MyHGTLayerSlice(nn.Module):
         attn_score = torch.sum(t, dim=1, keepdim=True) * rel_pri / self.sqrt_dk
         alpha = softmax(attn_score, edge_index_i, num_nodes=size_i)
         return v_j * alpha
+    
+    def message2(self, k_j, v_j, q_i, edge_index_i, size_i, edge_type):
+        t = (k_j.unsqueeze(1) @ self.relation_att[edge_type]) * q_i
+        attn_score = torch.sum(t, dim=1, keepdim=True) * self.relation_pri[edge_type] / self.sqrt_dk
+        index = edge_index_i * self.num_rels + edge_type
+        alpha = softmax(attn_score, index, num_nodes=size_i * self.num_rels)
+        return (v_j @ self.relation_msg[edge_type]) * alpha
     
 
 class MyHGTLayer(nn.Module):

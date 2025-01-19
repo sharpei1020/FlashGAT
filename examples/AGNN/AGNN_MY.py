@@ -118,3 +118,35 @@ class SputnikAGNN(nn.Module):
             x = self.relu(conv(x, adj[1], row_ptr, adj[0]))
         x = self.lin2(x)
         return x
+    
+class MyAGNNlayer_new(MyAGNNlayer):
+    def __init__(self, 
+                 feat_dim, reuires_grad=True):
+        super(MyAGNNlayer_new, self).__init__(feat_dim, reuires_grad)
+        
+    def reset_parameters(self):
+        if self.require_grad:
+            self.beta.data.fill_(1)
+
+    def forward(self, x, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask):
+        return mygraph.agnn_short(
+            x, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.beta, self.feat_dim
+        )
+
+class MyAGNN_new(nn.Module):
+    def __init__(self, 
+                 in_dim, hidden_dim, out_dim):
+        super(MyAGNN_new, self).__init__()
+        self.lin1 = nn.Linear(in_dim, hidden_dim)  
+        self.convs = torch.nn.ModuleList()
+        for _ in range(4):
+            self.convs.append(MyAGNNlayer_new(hidden_dim, False))
+        self.lin2 = nn.Linear(hidden_dim, out_dim)
+        self.relu = nn.ReLU(True)
+    
+    def forward(self, x, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask):
+        x = self.relu(self.lin1(x))
+        for conv in self.convs:
+            x = self.relu(conv(x, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask))
+        x = self.lin2(x)
+        return x

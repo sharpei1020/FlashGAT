@@ -223,12 +223,12 @@ def profile(dataset, feat_dim, repeat=1000):
         del net_gat, u, v, adj, RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX
 
 
-    run_baseline_graphiler(g, features)
-    run_pyg(g, features)
+    # run_baseline_graphiler(g, features)
+    # run_pyg(g, features)
     run_mygat(g, features)
     run_mygat_new(g, features)
-    run_dgl(g, features)
-    run_sputnik_gat(g, features)
+    # run_dgl(g, features)
+    # run_sputnik_gat(g, features)
     
 
     return log
