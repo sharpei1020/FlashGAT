@@ -63,7 +63,7 @@ class MyGATlayer(nn.Module):
         glorot(self.att_i)
         glorot(self.att_j)
 
-    def forward(self, x, edge_index, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, counts, layer_i):
+    def forward(self, x, edge_index, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, layer_i):
 ############################################################
         # class Container(torch.nn.Module):
         #     def __init__(self, mydata):
@@ -223,10 +223,10 @@ class MyGAT(nn.Module):
         self.conv1 = MyGATlayer(in_dim, hidden_dim, 1)
         self.conv2 = MyGATlayer(hidden_dim, out_dim, 1)
 
-    def forward(self, x, adj, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, counts):
-        h = self.conv1(x, adj, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, counts, 1)
+    def forward(self, x, adj, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX):
+        h = self.conv1(x, adj, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, 1)
         h = F.elu(h)
-        h = self.conv2(h, adj, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, counts, 2)
+        h = self.conv2(h, adj, RowWindowOffset, RowWindowRowOffset, TCOffset, BlockMask, SparseAToX, 2)
         return h
 
 class MyGATlayer_new(MyGATlayer):
@@ -246,7 +246,7 @@ class MyGATlayer_new(MyGATlayer):
         glorot(self.att_i)
         glorot(self.att_j)
 
-    def forward(self, x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask):
+    def forward(self, x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, block_size):
         # class Container(torch.nn.Module):
         #     def __init__(self, mydata):
         #         super(Container, self).__init__()
@@ -261,22 +261,23 @@ class MyGATlayer_new(MyGATlayer):
         # import os
         # os._exit(0)
         return mygraph.gat_short(x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.lin.weight,\
-                                  self.att_i.data, self.att_j.data, self._num_heads, self._out_feats)
+                                  self.att_i.data, self.att_j.data, self._num_heads, self._out_feats, block_size[0], block_size[1])
 
 class MyGAT_new(nn.Module):
     def __init__(self,
                  in_dim,
                  hidden_dim,
-                 out_dim):
+                 out_dim, block_size):
         super(MyGAT_new, self).__init__()
+        self.block_size = block_size
 
         self.conv1 = MyGATlayer_new(in_dim, hidden_dim, 1)
         self.conv2 = MyGATlayer_new(hidden_dim, out_dim, 1)
 
     def forward(self, x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask):
-        h = self.conv1(x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask)
+        h = self.conv1(x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.block_size)
         h = F.elu(h)
-        h = self.conv2(h, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask)
+        h = self.conv2(h, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.block_size)
         return h
 
 class SputnikGATLayer(nn.Module):

@@ -143,20 +143,22 @@ class AGNNConvLayer(torch.nn.Module):
 
 
 class TC_AGNN(torch.nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
+    def __init__(self, input_dim, hidden_dim, output_dim, orign):
         super(TC_AGNN, self).__init__()
-        self.lin1 = nn.Linear(input_dim, hidden_dim)
+        self.lin1 = AGNNConvLayer(input_dim, hidden_dim) if orign else nn.Linear(input_dim, hidden_dim)
         self.hidden_layers = nn.ModuleList()
-        for _ in range(4):
+        layer_num = 2 if orign else 4
+        for _ in range(layer_num):
             self.hidden_layers.append(AGNNConvLayer(hidden_dim, hidden_dim))
-        self.lin2 = nn.Linear(hidden_dim, output_dim)
+        self.lin2 = AGNNConvLayer(hidden_dim, output_dim) if orign else nn.Linear(hidden_dim, output_dim)
         self.relu = nn.ReLU(True)
+        self.orign = orign
 
     def forward(self, X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow):
-        X = self.relu(self.lin1(X))
+        X = self.relu(self.lin1(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow) if self.orign else self.lin1(X))
         for Gconv in self.hidden_layers:
             X = self.relu(Gconv(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow))
-        X = self.lin2(X)
+        X = self.lin1(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow) if self.orign else self.lin2(X)
         return X
 
 DIM = 32
@@ -284,7 +286,7 @@ def profile(dataset_name, feat_dim, repeat=1000):
         build_neighbor_parts = time.perf_counter() - start
         print("Prep. (ms):\t{:.3f}".format(build_neighbor_parts*1e3))
 
-        net = TC_AGNN(feat_dim, DIM, DIM).to(device)
+        net = TC_AGNN(feat_dim, DIM, DIM, True).to(device)
         net.eval()
         with torch.no_grad():
             bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow),
@@ -420,7 +422,7 @@ def profile(dataset_name, feat_dim, repeat=1000):
         self = torch.vstack([torch.arange(0, node_num).type(torch.IntTensor)] * 2).to(device)
         adj_ = torch.unique(torch.torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
         RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX = mygraph.process_DTC_short_mask(adj_, 16, 16, node_num, False)
-        net = MyAGNN_new(feat_dim, DIM, DIM).to(device)
+        net = MyAGNN_new(feat_dim, DIM, DIM, (16, 16)).to(device)
         net.eval()
         with torch.no_grad():
             bench(net=net, net_params=(features, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask), 
@@ -428,7 +430,7 @@ def profile(dataset_name, feat_dim, repeat=1000):
         del adj, node_num, adj_, RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX, net
     # run_pyg(dataset, features)
     # run_tcgnn(dataset, features)
-    # run_mygraph(dataset, features)
+    run_mygraph(dataset, features)
     # run_dgl(dataset, features)
     # run_sputnik(dataset, features)
     # run_udf(dataset, features)

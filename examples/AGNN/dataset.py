@@ -110,8 +110,7 @@ class TCGNN_dataset(torch.nn.Module):
 
         # Get degrees array.
         degrees = (self.row_pointers[1:] - self.row_pointers[:-1]).tolist()
-        self.degrees = torch.sqrt(torch.FloatTensor(list(map(func, degrees)))).cuda()
-
+        self.degrees = degrees
     def init_embedding(self, dim):
         '''
         Generate node embedding for nodes.

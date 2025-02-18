@@ -128,15 +128,16 @@ class MyAGNNlayer_new(MyAGNNlayer):
         if self.require_grad:
             self.beta.data.fill_(1)
 
-    def forward(self, x, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask):
+    def forward(self, x, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, block_size):
         return mygraph.agnn_short(
-            x, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.beta, self.feat_dim
-        )
+            x, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.beta, self.feat_dim, 
+            block_size[0], block_size[1])
 
 class MyAGNN_new(nn.Module):
     def __init__(self, 
-                 in_dim, hidden_dim, out_dim):
+                 in_dim, hidden_dim, out_dim, block_size):
         super(MyAGNN_new, self).__init__()
+        self.block_size = block_size
         self.lin1 = nn.Linear(in_dim, hidden_dim)  
         self.convs = torch.nn.ModuleList()
         for _ in range(4):
@@ -147,6 +148,6 @@ class MyAGNN_new(nn.Module):
     def forward(self, x, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask):
         x = self.relu(self.lin1(x))
         for conv in self.convs:
-            x = self.relu(conv(x, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask))
+            x = self.relu(conv(x, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.block_size))
         x = self.lin2(x)
         return x
