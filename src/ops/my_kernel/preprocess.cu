@@ -202,10 +202,10 @@ __global__ void BlockMaskShortKernel(
 
 std::vector<torch::Tensor> process_DTC(at::Tensor edge_index, at::Tensor dev_idx, int block_high, int block_width, int num_nodes, bool balance)
 {
-    uint32_t* value, *value1;
+    uint64_t* value, *value1;
     int* rowwindow_value, *X_col_id, *edge_idx1;
-    cudaMalloc(&value, edge_index.size(1) * sizeof(uint32_t));
-    cudaMalloc(&value1, edge_index.size(1) * sizeof(uint32_t));
+    cudaMalloc(&value, edge_index.size(1) * sizeof(uint64_t));
+    cudaMalloc(&value1, edge_index.size(1) * sizeof(uint64_t));
     cudaMalloc(&edge_idx1, edge_index.size(1) * sizeof(int));
     thrust::gather(thrust::device, edge_index.data_ptr<int>() + edge_index.size(1), 
                     edge_index.data_ptr<int>() + 2 * edge_index.size(1), dev_idx.data_ptr<int>(), edge_idx1);
@@ -213,13 +213,15 @@ std::vector<torch::Tensor> process_DTC(at::Tensor edge_index, at::Tensor dev_idx
 
     thrust::transform(thrust::device, edge_index.data_ptr<int>(), 
                       edge_index.data_ptr<int>() + edge_index.size(1), edge_index.data_ptr<int>() + edge_index.size(1),
-                      value, [=] __device__ (int e0, int e1) {return ((uint32_t)(e1 / block_high) * (uint32_t)(num_nodes) + (uint32_t)(e0));});
+                      value, [=] __device__ (int e0, int e1) {return ((uint64_t)(e1 / block_high) * (uint64_t)(num_nodes) + (uint64_t)(e0));});
+    // printf("after transform\n");
     thrust::copy(thrust::device, value, value + edge_index.size(1), value1);
     thrust::stable_sort_by_key(thrust::device, value, value + edge_index.size(1), edge_index.data_ptr<int>());
     thrust::stable_sort_by_key(thrust::device, value1, value1 + edge_index.size(1), edge_idx1);
     cudaMalloc(&rowwindow_value, edge_index.size(1) * sizeof(int));
     thrust::transform(thrust::device, edge_idx1, edge_idx1 + edge_index.size(1),
                       rowwindow_value, [=] __device__ (int e) {return e / block_high;});
+    // printf("after stable_sort_by_key and transform.\n");
     cudaFree(value);
     cudaFree(value1);
     // after sort edge_index_0 and edge_index_1 according to rowwindow_id(rowwindow_value) and col_id
@@ -232,11 +234,13 @@ std::vector<torch::Tensor> process_DTC(at::Tensor edge_index, at::Tensor dev_idx
                                 [=]__device__(int x1, int x0) {return (x1 == x0) ? 0 : 1;});
     thrust::transform(thrust::device, SparseAidx_temp, SparseAidx_temp + edge_index.size(1), SparseAidx, SparseAidx, 
                     [=]__device__(int x0, int x1) {return (x0 | x1);});
+    // printf("after adjacent_difference and transform.\n");
     cudaMemset(SparseAidx, 1, 1);
     thrust::copy_n(thrust::device, SparseAidx, edge_index.size(1), SparseAidx_temp);
     thrust::inclusive_scan_by_key(thrust::device, rowwindow_value, rowwindow_value + edge_index.size(1), SparseAidx, SparseAidx, 
                                 thrust::equal_to<int>(), thrust::plus<int>());
     thrust::inclusive_scan(thrust::device, SparseAidx_temp, SparseAidx_temp + edge_index.size(1), SparseAidx_temp);
+    // printf("after inclusive_scan.\n");
     cudaMalloc(&SparseAidx_temp1, edge_index.size(1) * sizeof(int));
     thrust::copy_n(thrust::device, SparseAidx_temp, edge_index.size(1), SparseAidx_temp1);
     // after record nonzero-element's col_id in sparse matrix
@@ -250,6 +254,7 @@ std::vector<torch::Tensor> process_DTC(at::Tensor edge_index, at::Tensor dev_idx
     cudaFree(SparseAidx_temp1);
     //SparseAToX
     auto SparseAToX = torch::from_blob(X_col_id, {unique_X_col_id_end.second - X_col_id}, device(torch::kCUDA).dtype(torch::kInt32)).clone();
+    // printf("after getting SparseAToX.\n");
     //after de-duplicate col_id
     int* RowWindowMask, *RowWindowNum_temp, *RowWindowNum, *unique_rowwindow_value;
     cudaMalloc(&RowWindowMask, SparseAToX.size(0) * sizeof(int));
@@ -264,6 +269,7 @@ std::vector<torch::Tensor> process_DTC(at::Tensor edge_index, at::Tensor dev_idx
     auto new_end_ = thrust::reduce_by_key(thrust::device, rowwindow_value, unique_rowwindow_end.second, RowWindowMask,
                             unique_rowwindow_value, RowWindowNum_temp, thrust::equal_to<int>(), thrust::plus<int>());
     thrust::scatter(thrust::device, RowWindowNum_temp, new_end_.second, unique_rowwindow_value, RowWindowNum);
+    // printf("after scatter and reduce_by_key.\n");
     if (balance) {
         int* RowWindowNum_temp1;
         cudaMalloc(&RowWindowNum_temp1, (num_nodes + block_high - 1) / block_high * sizeof(int));
@@ -352,10 +358,10 @@ std::vector<torch::Tensor> process_DTC(at::Tensor edge_index, at::Tensor dev_idx
 
 std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_high, int block_width, int num_nodes, bool balance)
 {
-    uint32_t *value0, *value1;
+    uint64_t *value0, *value1;
     int* rowwindow_value, *X_col_id, *edge_idx1;
-    cudaMalloc(&value0, edge_index.size(1) * sizeof(uint32_t));
-    cudaMalloc(&value1, edge_index.size(1) * sizeof(uint32_t));
+    cudaMalloc(&value0, edge_index.size(1) * sizeof(uint64_t));
+    cudaMalloc(&value1, edge_index.size(1) * sizeof(uint64_t));
     cudaMalloc(&edge_idx1, edge_index.size(1) * sizeof(int));
     thrust::copy_n(thrust::device, edge_index.data_ptr<int>() + edge_index.size(1), 
                     edge_index.size(1), edge_idx1);
@@ -363,7 +369,7 @@ std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_
 
     thrust::transform(thrust::device, edge_index.data_ptr<int>(), 
                       edge_index.data_ptr<int>() + edge_index.size(1), edge_index.data_ptr<int>() + edge_index.size(1),
-                      value0, [=] __device__ (int e0, int e1) {return ((uint32_t)(e1 / block_high) * (uint32_t)(num_nodes) + (uint32_t)(e0));});
+                      value0, [=] __device__ (int e0, int e1) {return ((uint64_t)(e1 / block_high) * (uint64_t)(num_nodes) + (uint64_t)(e0));});
     thrust::copy_n(thrust::device, value0, edge_index.size(1), value1);
     thrust::stable_sort_by_key(thrust::device, value0, value0 + edge_index.size(1), edge_index.data_ptr<int>());
     thrust::stable_sort_by_key(thrust::device, value1, value1 + edge_index.size(1), edge_idx1);
@@ -407,8 +413,15 @@ std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_
     auto new_end = thrust::reduce_by_key(thrust::device, rowwindow_value, unique_rowwindow_end.second, 
                             RowWindowMask, unique_rowwindow_value, RowWindowNum_temp, thrust::equal_to<int>(), 
                             thrust::plus<int>());
+    //////////////////////////////////////////////////////////////////////////
     // int RowWindowNum_temp_len = new_end.second - RowWindowNum_temp;
     // printf("current RowWindowNum_temp_len: %d\n", RowWindowNum_temp_len);
+    // auto max_rowwindow_value = thrust::max_element(thrust::device, unique_rowwindow_value, unique_rowwindow_value + RowWindowNum_temp_len);
+    // int max_rowwindow_value_value, last_rowwindow_value;
+    // cudaMemcpy(&max_rowwindow_value_value, max_rowwindow_value, sizeof(int), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(&last_rowwindow_value, unique_rowwindow_value + RowWindowNum_temp_len - 1, sizeof(int), cudaMemcpyDeviceToHost);
+    // printf("max_rowwindow_value_value: %d, last_rowwindow_value: %d\n", max_rowwindow_value_value, last_rowwindow_value);
+    ///////////////////////////////////////////////////////////////////////
     cudaMalloc(&RowWindowNum, (num_nodes + block_high - 1) / block_high * sizeof(int));
     thrust::fill_n(thrust::device, RowWindowNum, (num_nodes + block_high - 1) / block_high, 0);
     thrust::scatter(thrust::device, RowWindowNum_temp, new_end.second, unique_rowwindow_value, RowWindowNum);
@@ -444,7 +457,14 @@ std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_
     // printf("after getting align_idx\n");
     at::Tensor SparseAToX = at::empty({block_num * block_width}, device(torch::kCUDA).dtype(torch::kInt32));
     thrust::fill_n(thrust::device, SparseAToX.data_ptr<int>(), block_width * block_num, num_nodes);
+////////////////////////////////////////////////////////////////////////////////////////////
+    // auto max_align_idx = thrust::max_element(thrust::device, align_idx, align_idx + rowwindow_value_len);
+    // int max_align_idx_value;
+    // cudaMemcpy(&max_align_idx_value, max_align_idx, sizeof(int), cudaMemcpyDeviceToHost);
+    // printf("max_align_idx_value: %d, SparseAToX_len: %d\n", max_align_idx_value, block_num * block_width);
+////////////////////////////////////////////////////////////////////////////////////////////
     thrust::scatter(thrust::device, X_col_id, unique_X_col_id_end.second, align_idx, SparseAToX.data_ptr<int>());
+    // printf("after scatter\n");
     cudaFree(SparseAidx_temp);
     cudaFree(SparseAidx_temp1);
     cudaFree(X_col_id);
@@ -471,6 +491,7 @@ std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_
     thrust::reduce_by_key(thrust::device, block_value, block_value_end, BlockElementMask,
                             block_value, BitMask_RowOffset.data_ptr<int>() + 1, thrust::equal_to<uint32_t>(), 
                             [=]__device__ (uint32_t x1, uint32_t x0) {return (int)(x1 + x0);});
+    // printf("after reduce_by_key 0\n");
     thrust::inclusive_scan(thrust::device, BitMask_RowOffset.data_ptr<int>() + 1, 
                             BitMask_RowOffset.data_ptr<int>() + 1 + block_num, BitMask_RowOffset.data_ptr<int>() + 1);
     cudaMalloc(&BlockElementMask, edge_index.size(1) * sizeof(uint32_t));
@@ -482,6 +503,7 @@ std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_
     cudaMemset(TCOffset, 0, sizeof (uint32_t));
     thrust::reduce_by_key(thrust::device, block_value, block_value + edge_index.size(1), BlockElementMask,
                             block_value, TCOffset + 1, thrust::equal_to<uint32_t>(), thrust::plus<uint32_t>());
+    // printf("after reduce_by_key 1\n");
     thrust::inclusive_scan(thrust::device, TCOffset + 1, TCOffset + 1 + block_num, TCOffset + 1);
     int mask_num;
     cudaMemcpy(&mask_num, BitMask_RowOffset.data_ptr<int>() + block_num, sizeof(int), cudaMemcpyDeviceToHost);

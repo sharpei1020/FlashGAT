@@ -522,7 +522,9 @@ at::Tensor GAT_short(
     at::Tensor att_i, 
     at::Tensor att_j,
     int num_heads,
-    int out_feats
+    int out_feats,
+    int block_high,
+    int block_width
 ) {
     int num_nodes = feature.size(0);
     auto feats = torch::mm(feature, lin_weight.t());
@@ -531,17 +533,38 @@ at::Tensor GAT_short(
     auto output = at::empty({num_nodes, out_feats}, feature.options());
 
     int threads = 128;
-    int blocks = (num_nodes + 15) / 16;
-    gat_kernel_16x16_64<<<blocks, threads>>>(
-        RowWindowOffsets.data_ptr<int>(),
-        SparseAToX.data_ptr<int>(),
-        BitMaskRowOffset.data_ptr<int>(),
-        (uint16_t*)BitColMask.data_ptr<uint8_t>(),
-        (uint16_t*)BitRowMask.data_ptr<uint8_t>(),
-        feats.data_ptr<float>(),
-        alpha_i.data_ptr<float>(),
-        alpha_j.data_ptr<float>(),
-        output.data_ptr<float>(),
-        num_nodes);
+    int blocks = (num_nodes + block_high - 1) / block_high;
+    int mode = block_high*100+block_width;
+    switch(mode) {
+        case 1608:
+            gat_kernel_16x8_64<<<blocks, threads>>>(
+                RowWindowOffsets.data_ptr<int>(),
+                SparseAToX.data_ptr<int>(),
+                BitMaskRowOffset.data_ptr<int>(),
+                (uint16_t*)BitColMask.data_ptr<uint8_t>(),
+                BitRowMask.data_ptr<uint8_t>(),
+                feats.data_ptr<float>(),
+                alpha_i.data_ptr<float>(),
+                alpha_j.data_ptr<float>(),
+                output.data_ptr<float>(),
+                num_nodes);
+            break;
+        case 1616:
+            gat_kernel_16x16_64<<<blocks, threads>>>(
+                RowWindowOffsets.data_ptr<int>(),
+                SparseAToX.data_ptr<int>(),
+                BitMaskRowOffset.data_ptr<int>(),
+                (uint16_t*)BitColMask.data_ptr<uint8_t>(),
+                (uint16_t*)BitRowMask.data_ptr<uint8_t>(),
+                feats.data_ptr<float>(),
+                alpha_i.data_ptr<float>(),
+                alpha_j.data_ptr<float>(),
+                output.data_ptr<float>(),
+                num_nodes);
+            break;
+        default:
+            printf("Unsupported mode: %d\n", mode);
+            exit(1);
+    }
     return output;
 }

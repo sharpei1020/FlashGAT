@@ -23,7 +23,9 @@ at::Tensor AGNN_short(
     at::Tensor BitColMask,
     at::Tensor BitRowMask,
     at::Tensor beta,
-    int out_feats
+    int out_feats,
+    int block_high,
+    int block_width
 );
 
 at::Tensor sputnik_AGNN(

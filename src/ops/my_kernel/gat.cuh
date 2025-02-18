@@ -93,7 +93,9 @@ at::Tensor GAT_short(
     at::Tensor att_i, 
     at::Tensor att_j,
     int num_heads,
-    int out_feats
+    int out_feats,
+    int block_high,
+    int block_width
 );
 
 at::Tensor sputnik_GAT(
