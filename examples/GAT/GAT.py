@@ -23,7 +23,7 @@ device = setup()
 
 BREAK_FLAG = 2
 
-USE_DGL_DATASET = True
+USE_DGL_DATASET = False
 
 if USE_DGL_DATASET:
     from graphiler.utils import homo_dataset
@@ -270,14 +270,20 @@ def profile(dataset_name, feat_dim, repeat=1000):
         else: 
             adj = torch.IntTensor(g.edge_index).contiguous()
             node_num = g.num_nodes.item(0)
+        RowWindowOffset_, BitMaskRowOffset_, BitColMask_, BitRowMask_, SparseAToX_ = mygraph.process_DTC_short_mask(adj.to(device), 16, 8, node_num, False)
+        net_gat_ = MyGAT_new(in_dim=feat_dim, hidden_dim=DEFAULT_DIM,
+                        out_dim=DEFAULT_DIM, block_size=(16, 8)).to(device)
         RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX = mygraph.process_DTC_short_mask(adj.to(device), 16, 16, node_num, False)
         net_gat = MyGAT_new(in_dim=feat_dim, hidden_dim=DEFAULT_DIM,
                         out_dim=DEFAULT_DIM, block_size=(16, 16)).to(device)
         net_gat.eval()
+        net_gat_.eval()
         with torch.no_grad():
             bench(net=net_gat, net_params=(features, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask),
-                  tag='6-MyGat-new', nvprof=False, repeat=repeat, memory=True, log=log)
-        del net_gat, adj, RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX
+                  tag='6-MyGat-1616', nvprof=False, repeat=repeat, memory=True, log=log)
+            bench(net=net_gat_, net_params=(features, RowWindowOffset_, SparseAToX_, BitMaskRowOffset_, BitColMask_, BitRowMask_),
+                  tag='6-MyGat-new-1608', nvprof=False, repeat=repeat, memory=True, log=log)
+        del net_gat, net_gat_, adj, RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX, RowWindowOffset_, BitMaskRowOffset_, BitColMask_, BitRowMask_, SparseAToX_
 
 
     # run_baseline_graphiler(g, features)

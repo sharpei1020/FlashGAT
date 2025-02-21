@@ -2,6 +2,7 @@
 import torch
 import numpy as np
 import time
+import os
 
 from scipy.sparse import *
 
@@ -10,12 +11,19 @@ def func(x):
         return x
     else:
         return 1
+    
+TCGNN_Data = {'citeseer':'citeseer.npz', 'cora':'cora.npz', 'pubmed':'pubmed.npz', 
+    'ppi':'ppi.npz', 'PROTEINS_full':'PROTEINS_full.npz', 'OVCAR-8H':'OVCAR-8H.npz',
+    'Yeast':'Yeast.npz', 'DD':'DD.npz', 'YeastH':'YeastH.npz', 'amazon0505':'amazon0505.npz',
+    'artist':'artist.npz', 'com-amazon':'com-amazon.npz', 'soc-BlogCatalog':'soc-BlogCatalog.npz',
+    'amazon0601':'amazon0601.npz', 'web-Stanford':'web-Stanford.txt', 'web-BerkStan':'web-BerkStan.txt',
+    'web-Google':'web-Google.txt', 'web-NotreDame':'web-NotreDame.txt'}
 
 class TCGNN_dataset(torch.nn.Module):
     """
     data loading for more graphs
     """
-    def __init__(self, path, dim, load_from_txt=True, verbose=False):
+    def __init__(self, dataset_name, dim, load_from_txt=True, verbose=False):
         super(TCGNN_dataset, self).__init__()
 
         self.nodes = set()
@@ -32,51 +40,42 @@ class TCGNN_dataset(torch.nn.Module):
         self.avg_degree = -1
         self.avg_edgeSpan = -1
 
-        self.init_edges(path)
+        dir_path = os.path.dirname(__file__)
+        self.path = os.path.join(dir_path, "tcgnn-ae-graphs/", TCGNN_Data[dataset_name])
+        self.init_edges()
         self.init_embedding(dim)
-        # self.init_labels(num_class)
+        
 
-        # train = 1
-        # val = 0.3
-        # test = 0.1
-        # self.train_mask = [1] * int(self.num_nodes * train) + [0] * (self.num_nodes  - int(self.num_nodes * train))
-        # self.val_mask = [1] * int(self.num_nodes * val)+ [0] * (self.num_nodes  - int(self.num_nodes * val))
-        # self.test_mask = [1] * int(self.num_nodes * test) + [0] * (self.num_nodes  - int(self.num_nodes * test))
-        # self.train_mask = torch.BoolTensor(self.train_mask).cuda()
-        # self.val_mask = torch.BoolTensor(self.val_mask).cuda()
-        # self.test_mask = torch.BoolTensor(self.test_mask).cuda()
-
-    def init_edges(self, path):
+    def init_edges(self):
 
         # loading from a txt graph file
-        if self.load_from_txt:
-            fp = open(path, "r")
-            src_li = []
-            dst_li = []
-            start = time.perf_counter()
-            for line in fp:
-                src, dst = line.strip('\n').split()
-                src, dst = int(src), int(dst)
-                src_li.append(src)
-                dst_li.append(dst)
-                self.nodes.add(src)
-                self.nodes.add(dst)
+        if self.path.endswith('.txt'):
+            # fp = open(self.path, "r")
+            # src_li = []
+            # dst_li = []
+            # start = time.perf_counter()
+            # for line in fp:
+            #     print(line)
+            #     src, dst = line.strip('\n').split()
+            #     src, dst = int(src), int(dst)
+            #     src_li.append(src)
+            #     dst_li.append(dst)
+            #     self.nodes.add(src)
+            #     self.nodes.add(dst)
             
-            self.num_edges = len(src_li)
-            self.num_nodes = max(self.nodes) + 1
-            self.edge_index = np.stack([src_li, dst_li])
-
-            dur = time.perf_counter() - start
+            self.edge_index = np.array(np.loadtxt(self.path), dtype=np.int32).reshape(2, -1)
+            self.edge_index = self.edge_index if np.min(self.edge_index) == 0 else self.edge_index - 1
+            # print(self.edge_index)
+            self.num_edges = len(self.edge_index[0])
+            self.num_nodes = np.max(self.edge_index) + 1
+            # dur = time.perf_counter() - start
             if self.verbose_flag:
                 print("# Loading (txt) {:.3f}s ".format(dur))
 
         # loading from a .npz graph file
-        else: 
-            if not path.endswith('.npz'):
-                raise ValueError("graph file must be a .npz file")
-
+        elif self.path.endswith('.npz'): 
             start = time.perf_counter()
-            graph_obj = np.load(path)
+            graph_obj = np.load(self.path)
             src_li = graph_obj['src_li']
             dst_li = graph_obj['dst_li']
 
@@ -86,9 +85,12 @@ class TCGNN_dataset(torch.nn.Module):
             dur = time.perf_counter() - start
             if self.verbose_flag:
                 print("# Loading (npz)(s): {:.3f}".format(dur))
+
+        else:
+            print("Error: Unknown file format.")
         
         self.avg_degree = self.num_edges / self.num_nodes
-        self.avg_edgeSpan = np.mean(np.abs(np.subtract(src_li, dst_li)))
+        self.avg_edgeSpan = np.mean(np.abs(np.subtract(self.edge_index[0], self.edge_index[1])))
 
         if self.verbose_flag:
             print('# nodes: {}'.format(self.num_nodes))

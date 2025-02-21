@@ -29,7 +29,7 @@ from torch_geometric.utils import softmax
 n_heads = 1
 device = setup()
 
-USE_DGL_DATASET = True
+USE_DGL_DATASET = False
 
 # BREAK_FLAG = 2
 
@@ -42,20 +42,24 @@ else:
     homo_dataset = {
                     'citeseer':3703, 'cora':1433, 'pubmed':500, 
                     'ppi':50, 'PROTEINS_full':29, 'OVCAR-8H':66,
-                    'Yeast':74, 
-                    'DD':89, 'YeastH':75, 'amazon0505':96,
+                    'Yeast':74, 'DD':89, 'YeastH':75, 'amazon0505':96,
                     'artist':100, 'com-amazon':96, 'soc-BlogCatalog':128,
-                    'amazon0601':96}
+                    'amazon0601':96, 'web-BerkStan':100, 'web-Google':100,
+                    'web-NotreDame':100, 'web-Stanford':100}
 
 class TCGNNFunction_AGNN(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, X, weights, attention_w, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow):
+    def forward(ctx, X, weights, attention_w, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, orign):
 
         # ctx.save_for_backward(X, weights, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow)
 
         # GEMM node update
         # X_prime = torch.mm(X, weights)
-        X_prime = F.normalize(X, p=2, dim=-1)
+        x_prime = None
+        if orign:
+            X_prime = torch.mm(X, weights)
+        else:
+            X_prime = F.normalize(X, p=2, dim=-1)
         
         # SDDMM: edge feature computation. 
         # import time
@@ -66,8 +70,12 @@ class TCGNNFunction_AGNN(torch.autograd.Function):
         # print("sddmm time:{:.2f} ms".format((time.time() - t) * 1000))
 
         # Edge Attention Generation: [n_e, n_head]       
-        edge_attentions = torch.mm(edge_feature.unsqueeze(-1), attention_w).transpose(0,1).contiguous()
-        edge_attentions = softmax(edge_attentions.squeeze(), edgeToRow.to(torch.int64), 
+        edge_attentions = None
+        if orign:
+            edge_attentions = torch.mm(edge_feature.unsqueeze(-1), attention_w).transpose(0,1).contiguous() 
+        else: 
+            edge_attentions = torch.mm(edge_feature.unsqueeze(-1), attention_w).transpose(0,1).contiguous()
+            edge_attentions = softmax(edge_attentions.squeeze(), edgeToRow.to(torch.int64), 
                                   row_pointers.to(torch.int64), num_nodes=len(row_pointers)-1).reshape(1, -1)
         # print(edge_attentions.size())
         # SpMM_AGNN: Neighbor AggreAGNNion.
@@ -115,7 +123,7 @@ class AGNNConvLayer(torch.nn.Module):
         stdv = 1. / math.sqrt(self.weights.size(1))
         self.weights.data.uniform_(-stdv, stdv)
 
-    def forward(self, X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow):
+    def forward(self, X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, orign):
         '''
         @param:
         X:  the input tensor of the graph node embedding, shape: [n_nodes, n_dim].
@@ -139,7 +147,7 @@ class AGNNConvLayer(torch.nn.Module):
         # import os
         # os._exit(0)
 
-        return TCGNNFunction_AGNN.apply(X, self.weights, self.attention_w, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow)
+        return TCGNNFunction_AGNN.apply(X, self.weights, self.attention_w, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, orign)
 
 
 class TC_AGNN(torch.nn.Module):
@@ -155,10 +163,10 @@ class TC_AGNN(torch.nn.Module):
         self.orign = orign
 
     def forward(self, X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow):
-        X = self.relu(self.lin1(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow) if self.orign else self.lin1(X))
+        X = self.relu(self.lin1(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, self.orign) if self.orign else self.lin1(X))
         for Gconv in self.hidden_layers:
-            X = self.relu(Gconv(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow))
-        X = self.lin1(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow) if self.orign else self.lin2(X)
+            X = self.relu(Gconv(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, self.orign))
+        X = self.lin2(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, self.orign) if self.orign else self.lin2(X)
         return X
 
 DIM = 32
@@ -182,8 +190,7 @@ def profile(dataset_name, feat_dim, repeat=1000):
         dataset, features = load_data(dataset_name, feat_dim, prepare=False)
         features = features.to(device)
     else:
-        dir_path = os.path.dirname(__file__)
-        dataset = TCGNN_dataset(os.path.join(dir_path, "tcgnn-ae-graphs/", dataset_name + ".npz"), feat_dim, load_from_txt=False)    
+        dataset = TCGNN_dataset(dataset_name, feat_dim, load_from_txt=False)    
         features = dataset.x.to(device)
 
     @empty_cache
@@ -287,11 +294,15 @@ def profile(dataset_name, feat_dim, repeat=1000):
         print("Prep. (ms):\t{:.3f}".format(build_neighbor_parts*1e3))
 
         net = TC_AGNN(feat_dim, DIM, DIM, True).to(device)
+        net_ = TC_AGNN(feat_dim, DIM, DIM, False).to(device)
         net.eval()
+        net_.eval()
         with torch.no_grad():
             bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow),
                   tag="2-TCGNN-primitives", nvprof=False, repeat=repeat, memory=True, log=log)
-        del num_nodes, num_edges, row_ptr, col_idx, num_row_windows, edgeToColumn, edgeToRow, blockPartition, net
+            bench(net=net_, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow),
+                  tag="2-TCGNN-w", nvprof=False, repeat=repeat, memory=True, log=log)
+        del num_nodes, num_edges, row_ptr, col_idx, num_row_windows, edgeToColumn, edgeToRow, blockPartition, net, net_
         
     @empty_cache
     def run_mygraph(dataset, features):
@@ -382,26 +393,26 @@ def profile(dataset_name, feat_dim, repeat=1000):
                 RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
                 BitMask_row, (udf_type.Base, None)), tag="UDF-base", nvprof=False, 
                 repeat=repeat, memory=True, log=log)
-            bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
-                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
-                BitMask_row, (udf_type.SDDMM_TCGNN, None)), tag="UDF-SDDMM_TCGNN", nvprof=False, 
-                repeat=repeat, memory=True, log=log)
+            # bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+            #     RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
+            #     BitMask_row, (udf_type.SDDMM_TCGNN, None)), tag="UDF-SDDMM_TCGNN", nvprof=False, 
+            #     repeat=repeat, memory=True, log=log)
             bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
                 RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
                 BitMask_row, (udf_type.SDDMM_MY, None)), tag="UDF-SDDMM_MY", nvprof=False, 
                 repeat=repeat, memory=True, log=log)
-            # bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
-            #     RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
-            #     BitMask_row, (udf_type.Softmax, mid_edge_feature)), tag="UDF-softmax", nvprof=False, 
-            #     repeat=repeat, memory=True, log=log)
-            # bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
-            #     RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
-            #     BitMask_row, (udf_type.SpMM, mid_softmax)), tag="UDF-DTC_SpMM", nvprof=False, 
-            #     repeat=repeat, memory=True, log=log)
-            # bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
-            #     RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
-            #     BitMask_row, (udf_type.ALL, None)), tag="UDF-ALL", nvprof=False, 
-            #     repeat=repeat, memory=True, log=log)
+            bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
+                BitMask_row, (udf_type.Softmax, mid_edge_feature)), tag="UDF-softmax", nvprof=False, 
+                repeat=repeat, memory=True, log=log)
+            bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
+                BitMask_row, (udf_type.SpMM, mid_softmax)), tag="UDF-DTC_SpMM", nvprof=False, 
+                repeat=repeat, memory=True, log=log)
+            bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
+                RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
+                BitMask_row, (udf_type.ALL, None)), tag="UDF-ALL", nvprof=False, 
+                repeat=repeat, memory=True, log=log)
             # bench(net=net, net_params=(features, row_ptr, col_idx, blockPartition, edgeToColumn, edgeToRow,
             #     RowWindow_offset, TCblocktile_id, TCblock_offset, sparseAToidx, BitMask_RowOffset, BitMask_col, 
             #     BitMask_row, (udf_type.ALL_MINE, None)), tag="UDF-ALL_MINE", nvprof=False, 
@@ -420,17 +431,32 @@ def profile(dataset_name, feat_dim, repeat=1000):
             adj = torch.IntTensor(dataset.edge_index).contiguous()
             node_num = dataset.num_nodes.item(0)
         self = torch.vstack([torch.arange(0, node_num).type(torch.IntTensor)] * 2).to(device)
-        adj_ = torch.unique(torch.torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
-        RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX = mygraph.process_DTC_short_mask(adj_, 16, 16, node_num, False)
-        net = MyAGNN_new(feat_dim, DIM, DIM, (16, 16)).to(device)
-        net.eval()
+        adj_0 = torch.unique(torch.torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
+        # adj_1 = torch.unique(torch.torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
+        # adj_2 = torch.unique(torch.torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
+        RowWindowOffset_, BitMaskRowOffset_, BitColMask_, BitRowMask_, SparseAToX_ = mygraph.process_DTC_short_mask(adj_0, 16, 8, node_num, False)
+        net_ = MyAGNN_new(feat_dim, DIM, DIM, (16, 8)).to(device)
+        # RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX = mygraph.process_DTC_short_mask(adj_1, 16, 16, node_num, False)
+        # net = MyAGNN_new(feat_dim, DIM, DIM, (16, 16)).to(device)
+        RowWindowOffset__, BitMaskRowOffset__, BitColMask__, BitRowMask__, SparseAToX__ = mygraph.process_DTC_short_mask(adj_2, 8, 16, node_num, False)
+        net__ = MyAGNN_new(feat_dim, DIM, DIM, (8, 16)).to(device)
+        # net_.eval()
+        # net.eval()
+        net__.eval()
         with torch.no_grad():
-            bench(net=net, net_params=(features, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask), 
-                    tag="3-myagnn_new", nvprof=False, repeat=repeat, memory=True, log=log)
-        del adj, node_num, adj_, RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX, net
+            # bench(net=net_, net_params=(features, RowWindowOffset_, SparseAToX_, BitMaskRowOffset_, BitColMask_, BitRowMask_), 
+            #         tag="3-myagnn_new-1608", nvprof=False, repeat=repeat, memory=True, log=log)
+            # bench(net=net, net_params=(features, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask), 
+            #         tag="3-myagnn_new", nvprof=False, repeat=repeat, memory=True, log=log)
+            bench(net=net__, net_params=(features, RowWindowOffset__, SparseAToX__, BitMaskRowOffset__, BitColMask__, BitRowMask__), 
+                    tag="3-myagnn_new-816", nvprof=False, repeat=repeat, memory=True, log=log)
+        del adj, node_num, \
+        # adj_1, RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX, net, \
+        # adj_0, RowWindowOffset_, BitMaskRowOffset_, BitColMask_, BitRowMask_, SparseAToX_, net_\
+        adj_2, RowWindowOffset__, BitMaskRowOffset__, BitColMask__, BitRowMask__, SparseAToX__, net__
     # run_pyg(dataset, features)
     # run_tcgnn(dataset, features)
-    run_mygraph(dataset, features)
+    # run_mygraph(dataset, features)
     # run_dgl(dataset, features)
     # run_sputnik(dataset, features)
     # run_udf(dataset, features)
