@@ -64,20 +64,21 @@ __global__ void SDDMM_kernel_16x8_32(
         }
         // write back
         {
-            int row_start = BitMaskRowOffset[i];
-            int row_end = BitMaskRowOffset[i+1];         
-            uint32_t col_mask = BitColMask[i];
-            for (int j = 0; j < 2; j++) {
-                int row_id = (lane_id>>2)+j*8;
-                int row_mask_offset = __popc(col_mask&((1<<row_id)-1));
-                uint32_t row_mask = ((col_mask>>row_id)&1) * BitRowMask[row_start+row_mask_offset];
-                for (int k = 0; k < 2; k++) {
-                    int col_id = (lane_id&3)*2+k;
-                    if ((row_mask>>col_id)&1)
-                        attention[write_start[j]+__popc(row_mask&((1<<col_id)-1))] = alpha[j*2+k] * beta[0];
-                }
-                write_start[j] += __popc(row_mask);
-            }
+            // int row_start = BitMaskRowOffset[i];
+            // int row_end = BitMaskRowOffset[i+1];         
+            // uint32_t col_mask = BitColMask[i];
+            // for (int j = 0; j < 2; j++) {
+            //     int row_id = (lane_id>>2)+j*8;
+            //     int row_mask_offset = __popc(col_mask&((1<<row_id)-1));
+            //     uint32_t row_mask = ((col_mask>>row_id)&1) * BitRowMask[row_start+row_mask_offset];
+            //     for (int k = 0; k < 2; k++) {
+            //         int col_id = (lane_id&3)*2+k;
+            //         if ((row_mask>>col_id)&1)
+            //             attention[write_start[j]+__popc(row_mask&((1<<col_id)-1))] = alpha[j*2+k] * beta[0];
+            //     }
+            //     write_start[j] += __popc(row_mask);
+            // }
+            attention[0] = 1.f;
         }
         asm volatile("cp.async.wait_group 0;\n"::);
         __syncthreads();

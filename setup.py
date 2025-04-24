@@ -31,16 +31,19 @@ setup(
     packages=['minhash_order'],
     ext_modules=[
         CUDAExtension('mygraph', [
-            'src/ops/my_kernel/rabbit_order/reorder.cpp',
+            # 'src/ops/my_kernel/rabbit_order/reorder.cpp',
             'src/ops/my_kernel/bind.cc',
             'src/ops/my_kernel/preprocess.cu',
             'src/ops/my_kernel/gcn_kernel.cu',
             'src/ops/my_kernel/gat_kernel.cu',
             'src/ops/my_kernel/gat_kernel_6.cu',
+            'src/ops/my_kernel/gat_kernel_adaptive.cu',
             'src/ops/my_kernel/agnn_kernel.cu',
+            'src/ops/my_kernel/agnn_kernel_adaptive.cu',
             'src/ops/my_kernel/agnn_udf.cu',
             'src/ops/my_kernel/agnn_kernel_.cu',
             'src/ops/my_kernel/agnn_divide.cu',
+            'src/ops/my_kernel/e2v_gat_kernel.cu',
             'src/ops/my_kernel/sputnik_gat_kernel.cu',
             'src/ops/my_kernel/sputnik_agnn_kernel.cu'
         ],

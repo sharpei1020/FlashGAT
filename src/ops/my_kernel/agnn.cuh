@@ -28,6 +28,23 @@ at::Tensor AGNN_short(
     int block_width
 );
 
+at::Tensor AGNN_adaptive(
+    at::Tensor feature,
+    at::Tensor beta,
+    at::Tensor RowWindowId_8x8,
+    at::Tensor RowWindowId_8x16,
+    at::Tensor RowWindowId_16x8,
+    at::Tensor RowWindowId_16x16,
+    at::Tensor RowWindowRowOffset,
+    at::Tensor RowWindowBlockOffset,
+    at::Tensor RowWindowSparseAToXOffset,
+    at::Tensor RowWindowColMaskOffset,
+    at::Tensor BlockRowMaskOffset,
+    at::Tensor ColMask,
+    at::Tensor RowMask,
+    at::Tensor SparseAToX
+);
+
 at::Tensor sputnik_AGNN(
     at::Tensor feature,
     at::Tensor row_idx,

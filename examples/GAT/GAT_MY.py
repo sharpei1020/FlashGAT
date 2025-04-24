@@ -8,8 +8,6 @@ from torch_geometric.utils import scatter, softmax
 import torch.nn.functional as F
 import mygraph
 
-
-
 def glorot(value: Any):
     if isinstance(value, Tensor):
         stdv = math.sqrt(6.0 / (value.size(-2) + value.size(-1)))
@@ -246,7 +244,7 @@ class MyGATlayer_new(MyGATlayer):
         glorot(self.att_i)
         glorot(self.att_j)
 
-    def forward(self, x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, block_size):
+    def forward(self, x, edge_index, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, block_size):
         # class Container(torch.nn.Module):
         #     def __init__(self, mydata):
         #         super(Container, self).__init__()
@@ -260,8 +258,26 @@ class MyGATlayer_new(MyGATlayer):
         # torch.jit.save(container, f"data_16x16.pt")
         # import os
         # os._exit(0)
-        return mygraph.gat_short(x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.lin.weight,\
+##################################################################
+        # if torch.is_tensor(x):
+        #     # x_ = self.dropout(x)
+        #     x_ = self.lin(x)
+        #     x_ = (x_, x_)
+        # else:
+        #     x_ = (self.dropout(x[0]), self.dropout(x[1]))
+        #     x_ = (self.lin(x_[0]), self.lin(x_[1]))
+
+        # out_ = self.propagate(edge_index, x=x_)
+        out = mygraph.gat_short(x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.lin.weight,\
                                   self.att_i.data, self.att_j.data, self._num_heads, self._out_feats, block_size[0], block_size[1])
+######################################################################        
+        # condition_out = torch.all(torch.abs(out_ - out) < 0.1, dim=-1).cpu()
+        # idxs = torch.nonzero(torch.where(condition_out, torch.zeros(condition_out.shape), torch.ones(condition_out.shape)))
+        # print(out[idxs[:1]], out_[idxs[:1]])
+        # print(out[idxs[7]], out_[idxs[7]])
+        # print(len(idxs), idxs.squeeze()[:50])
+        # assert len(idxs) == 0
+        return out
 
 class MyGAT_new(nn.Module):
     def __init__(self,
@@ -274,10 +290,77 @@ class MyGAT_new(nn.Module):
         self.conv1 = MyGATlayer_new(in_dim, hidden_dim, 1)
         self.conv2 = MyGATlayer_new(hidden_dim, out_dim, 1)
 
-    def forward(self, x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask):
-        h = self.conv1(x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.block_size)
+    def forward(self, x, adj, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask):
+        h = self.conv1(x, adj, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.block_size)
         h = F.elu(h)
-        h = self.conv2(h, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.block_size)
+        h = self.conv2(h, adj, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.block_size)
+        return h
+    
+class MyGATlayer_adaptive(MyGATlayer):
+    def __init__(self,
+                 in_feats,
+                 out_feats,
+                 num_heads,
+                 concat=True,
+                 dropout=0.,
+                 activation=None):
+        super(MyGATlayer_adaptive, self).__init__(in_feats,
+                 out_feats,
+                 num_heads)
+
+    def reset_parameters(self):
+        glorot(self.lin.weight)
+        glorot(self.att_i)
+        glorot(self.att_j)
+
+    def forward(self, x, edge_index, *param):
+        # class Container(torch.nn.Module):
+        #     def __init__(self, mydata):
+        #         super(Container, self).__init__()
+        #         for key, value in mydata.items():
+        #             self.register_buffer(key, value)
+
+        # mydata = {"x": x, "RowWindowOffset": RowWindowOffsets, "BitMaskRowOffset": BitMaskRowOffset, 
+        #           "BitColMask": BitColMask, "BitRowMask": BitRowMask,"SparseAToX": SparseAToX}
+        
+        # container = torch.jit.script(Container(mydata))
+        # torch.jit.save(container, f"data_16x16.pt")
+        # import os
+        # os._exit(0)
+##################################################################
+        # if torch.is_tensor(x):
+        #     # x_ = self.dropout(x)
+        #     x_ = self.lin(x)
+        #     x_ = (x_, x_)
+        # else:
+        #     x_ = (self.dropout(x[0]), self.dropout(x[1]))
+        #     x_ = (self.lin(x_[0]), self.lin(x_[1]))
+
+        # out_ = self.propagate(edge_index, x=x_)
+        out = mygraph.gat_adaptive(x, self.lin.weight,self.att_i.data, self.att_j.data, *param)
+######################################################################        
+        # condition_out = torch.all(torch.abs(out_ - out) < 0.1, dim=-1).cpu()
+        # idxs = torch.nonzero(torch.where(condition_out, torch.zeros(condition_out.shape), torch.ones(condition_out.shape)))
+        # print(out[idxs[:1]], out_[idxs[:1]])
+        # print(out[idxs[7]], out_[idxs[7]])
+        # print(len(idxs), idxs.squeeze()[:50])
+        # assert len(idxs) == 0
+        return out
+
+class MyGAT_adaptive(nn.Module):
+    def __init__(self,
+                 in_dim,
+                 hidden_dim,
+                 out_dim):
+        super(MyGAT_adaptive, self).__init__()
+
+        self.conv1 = MyGATlayer_adaptive(in_dim, hidden_dim, 1)
+        self.conv2 = MyGATlayer_adaptive(hidden_dim, out_dim, 1)
+
+    def forward(self, x, *param):
+        h = self.conv1(x, *param)
+        h = F.elu(h)
+        h = self.conv2(h, *param)
         return h
 
 class SputnikGATLayer(nn.Module):

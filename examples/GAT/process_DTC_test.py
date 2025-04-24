@@ -3,7 +3,8 @@ from ctypes import cdll
 cdll.LoadLibrary('/home/ljq/mine/graphiler/src/build/sputnik/libsputnik.so')
 import mygraph
 
-g = torch.randint(0, 2, (100, 100))
+g = torch.randint(0, 40, (500, 500))
+g = torch.where(g>=1, torch.zeros(g.shape), torch.ones(g.shape)).type(torch.IntTensor)
 res = torch.nonzero(g, as_tuple=True)
 adj = torch.vstack((res[1], res[0])).to(torch.int32)
 
@@ -79,8 +80,8 @@ def torchcore_process_DTC_short_mask(g, block_high, block_width, node_num):
     SparseAToX = torch.cat(SparseAToX).to("cuda")
     return RowWindowOffset, BitMask_RowOffset, BitMask_col, BitMask_row, SparseAToX
 
-RowWindowOffset_test, BitMask_RowOffset_test, BitMask_col_test, BitMask_row_test, SparseAToX_test = torchcore_process_DTC_short_mask(g, 32, 16, 100)
-RowWindowOffset, BitMask_RowOffset, BitMask_col, BitMask_row, SparseAToX = mygraph.process_DTC_short_mask(adj.to("cuda"), 32, 16, 100, False)
+RowWindowOffset_test, BitMask_RowOffset_test, BitMask_col_test, BitMask_row_test, SparseAToX_test = torchcore_process_DTC_short_mask(g, 8, 16, 500)
+RowWindowOffset, BitMask_RowOffset, BitMask_col, BitMask_row, SparseAToX = mygraph.process_DTC_short_mask(adj.to("cuda"), 8, 16, 500, False)
 # print(RowWindowOffset_test, RowWindowOffset)
 condition_out = torch.all(torch.abs(RowWindowOffset_test - RowWindowOffset) < 1e-5, dim=-1).cpu()
 print(condition_out)

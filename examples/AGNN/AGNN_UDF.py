@@ -32,7 +32,7 @@ class UDFAGNNlayer(nn.Module):
                 BitMask_row, select_params):
         select_id, edge_attentions = select_params[0], select_params[1]
         if select_id.value == 0:
-            x_norm = torch.norm(x, 2, -1).clamp_min(1e-12)
+            # x_norm = torch.norm(x, 2, -1).clamp_min(1e-12)
             return x
         elif select_id.value == 1:
             # x_prime = F.normalize(x, p=2, dim=1)

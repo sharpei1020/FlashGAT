@@ -16,14 +16,12 @@ import dgl
 
 from ctypes import cdll
 cdll.LoadLibrary('/home/ljq/mine/graphiler/src/build/sputnik/libsputnik.so')
-from GAT_MY import MyGAT, MyGAT_new, SputnikGAT
-
+from GAT_MY import MyGAT, MyGAT_new, SputnikGAT, MyGAT_adaptive
 
 device = setup()
-
 BREAK_FLAG = 2
 
-USE_DGL_DATASET = False
+USE_DGL_DATASET = True
 
 if USE_DGL_DATASET:
     from graphiler.utils import homo_dataset
@@ -35,10 +33,10 @@ else:
     homo_dataset = {
                     'citeseer':3703, 'cora':1433, 'pubmed':500, 
                     'ppi':50, 'PROTEINS_full':29, 'OVCAR-8H':66,
-                    'Yeast':74, 
-                    'DD':89, 'YeastH':75, 'amazon0505':96,
+                    'Yeast':74, 'DD':89, 'YeastH':75, 'amazon0505':96,
                     'artist':100, 'com-amazon':96, 'soc-BlogCatalog':128,
-                    'amazon0601':96}
+                    'amazon0601':96, 'web-BerkStan':100, 'web-Google':100,
+                    'web-NotreDame':100, 'web-Stanford':100}
 
 # Currently Graphiler do not support full module compilation
 # therefore, we pass extra parameters as a workaround for class member
@@ -115,7 +113,7 @@ def profile(dataset_name, feat_dim, repeat=1000):
         g, features = load_data(dataset_name, feat_dim, prepare=False)
     else:
         dir_path = os.path.dirname(__file__)
-        g = dataset.TCGNN_dataset(os.path.join(dir_path, "../AGNN/tcgnn-ae-graphs/", dataset_name + ".npz"), feat_dim, load_from_txt=False)
+        g = dataset.TCGNN_dataset(dataset_name, feat_dim, load_from_txt=False)
         features = g.x
     features = features.to(device)
 
@@ -270,29 +268,56 @@ def profile(dataset_name, feat_dim, repeat=1000):
         else: 
             adj = torch.IntTensor(g.edge_index).contiguous()
             node_num = g.num_nodes.item(0)
-        RowWindowOffset_, BitMaskRowOffset_, BitColMask_, BitRowMask_, SparseAToX_ = mygraph.process_DTC_short_mask(adj.to(device), 16, 8, node_num, False)
-        net_gat_ = MyGAT_new(in_dim=feat_dim, hidden_dim=DEFAULT_DIM,
-                        out_dim=DEFAULT_DIM, block_size=(16, 8)).to(device)
-        RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX = mygraph.process_DTC_short_mask(adj.to(device), 16, 16, node_num, False)
-        net_gat = MyGAT_new(in_dim=feat_dim, hidden_dim=DEFAULT_DIM,
-                        out_dim=DEFAULT_DIM, block_size=(16, 16)).to(device)
-        net_gat.eval()
-        net_gat_.eval()
+        # RowWindowOffset_, BitMaskRowOffset_, BitColMask_, BitRowMask_, SparseAToX_ = mygraph.process_DTC_short_mask(adj.to(device), 16, 8, node_num, False)
+        # net_gat_ = MyGAT_new(in_dim=feat_dim, hidden_dim=DEFAULT_DIM, out_dim=DEFAULT_DIM, block_size=(16, 8)).to(device)
+        # RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX = mygraph.process_DTC_short_mask(adj.to(device), 16, 16, node_num, False)
+        # net_gat = MyGAT_new(in_dim=feat_dim, hidden_dim=DEFAULT_DIM, out_dim=DEFAULT_DIM, block_size=(16, 16)).to(device)
+        RowWindowOffset__, BitMaskRowOffset__, BitColMask__, BitRowMask__, SparseAToX__ = mygraph.process_DTC_short_mask(adj.to(device), 8, 16, node_num, False)
+        net_gat__ = MyGAT_new(in_dim=feat_dim, hidden_dim=DEFAULT_DIM, out_dim=DEFAULT_DIM, block_size=(8, 16)).to(device)
+        # RowWindowOffset_0, BitMaskRowOffset_0, BitColMask_0, BitRowMask_0, SparseAToX_0 = mygraph.process_DTC_short_mask(adj.to(device), 8, 8, node_num, False)
+        # net_gat_0 = MyGAT_new(in_dim=feat_dim, hidden_dim=DEFAULT_DIM, out_dim=DEFAULT_DIM, block_size=(8, 8)).to(device)
+        # net_gat_.eval()
+        # net_gat.eval()
+        net_gat__.eval()
+        # net_gat_0.eval()
         with torch.no_grad():
-            bench(net=net_gat, net_params=(features, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask),
-                  tag='6-MyGat-1616', nvprof=False, repeat=repeat, memory=True, log=log)
-            bench(net=net_gat_, net_params=(features, RowWindowOffset_, SparseAToX_, BitMaskRowOffset_, BitColMask_, BitRowMask_),
-                  tag='6-MyGat-new-1608', nvprof=False, repeat=repeat, memory=True, log=log)
-        del net_gat, net_gat_, adj, RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX, RowWindowOffset_, BitMaskRowOffset_, BitColMask_, BitRowMask_, SparseAToX_
-
+            # bench(net=net_gat_, net_params=(features, adj.to(device), RowWindowOffset_, SparseAToX_, BitMaskRowOffset_, BitColMask_, BitRowMask_),
+            #       tag='6-MyGat-new-1608', nvprof=False, repeat=repeat, memory=True, log=log)
+            # bench(net=net_gat, net_params=(features, adj.to(device), RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask),
+            #       tag='6-MyGat-1616', nvprof=False, repeat=repeat, memory=True, log=log)
+            bench(net=net_gat__, net_params=(features, adj.to(device), RowWindowOffset__, SparseAToX__, BitMaskRowOffset__, BitColMask__, BitRowMask__),
+                  tag='6-MyGat-816', nvprof=False, repeat=repeat, memory=True, log=log)
+            # bench(net=net_gat_0, net_params=(features, adj.to(device), RowWindowOffset_0, SparseAToX_0, BitMaskRowOffset_0, BitColMask_0, BitRowMask_0),
+            #       tag='6-MyGat-808', nvprof=False, repeat=repeat, memory=True, log=log)
+        del adj, \
+        # net_gat_, RowWindowOffset_, BitMaskRowOffset_, BitColMask_, BitRowMask_, SparseAToX_, \
+        # net_gat, RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX, \
+        net_gat__, RowWindowOffset__, BitMaskRowOffset__, BitColMask__, BitRowMask__, SparseAToX__, \
+        # net_gat_0, RowWindowOffset_0, BitMaskRowOffset_0, BitColMask_0, BitRowMask_0, SparseAToX_0
+    
+    def run_mygat_adaptive(dataset, features):
+        adj, node_num = None, None
+        if USE_DGL_DATASET:
+            u, v = g.edges()
+            node_num = g.num_nodes()
+            adj = torch.vstack([u, v]).type(torch.IntTensor)
+        else: 
+            adj = torch.IntTensor(g.edge_index).contiguous()
+            node_num = g.num_nodes.item(0)
+        params = mygraph.adaptive_ASC(adj.to(device), "gat", node_num, node_num)
+        net = MyGAT_adaptive(in_dim=feat_dim, hidden_dim=DEFAULT_DIM, out_dim=DEFAULT_DIM).to(device)
+        net.eval()
+        with torch.no_grad():
+            bench(net=net, net_params=(features, adj.to(device), *params), tag="3-mygat_adaptive", nvprof=False, repeat=repeat, memory=True, log=log)
+        del params, adj, net
 
     # run_baseline_graphiler(g, features)
     # run_pyg(g, features)
     # run_mygat(g, features)
     # run_mygat_new(g, features)
     # run_dgl(g, features)
-    run_sputnik_gat(g, features)
-    
+    # run_sputnik_gat(g, features)
+    run_mygat_adaptive(g, features)
 
     return log
 

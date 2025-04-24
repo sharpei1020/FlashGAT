@@ -109,3 +109,22 @@ at::Tensor sputnik_GAT(
     int num_heads,
     int out_feats
 );
+
+at::Tensor GAT_adaptive(
+    at::Tensor feature,
+    at::Tensor lin_weight,
+    at::Tensor att_i,
+    at::Tensor att_j,
+    at::Tensor RowWindowId_8x8,
+    at::Tensor RowWindowId_8x16,
+    at::Tensor RowWindowId_16x8,
+    at::Tensor RowWindowId_16x16,
+    at::Tensor RowWindowRowOffset,
+    at::Tensor RowWindowBlockOffset,
+    at::Tensor RowWindowSparseAToXOffset,
+    at::Tensor RowWindowColMaskOffset,
+    at::Tensor BlockRowMaskOffset,
+    at::Tensor ColMask,
+    at::Tensor RowMask,
+    at::Tensor SparseAToX
+);

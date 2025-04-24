@@ -181,19 +181,19 @@ __global__ void agnn_kernel(
             float alpha = min(static_cast<float>(valid) * 6.f - 3.f, sparse_X[(i+1)&3][sparse_rowid][(sparse_colid+(warp_id&1))&7]) * b;
             float alpha_max = alpha;
             for (int j = 1; j < 8; j *= 2) {
-                // alpha_max = max(alpha_max, __shfl_xor_sync(FULL_MASK, alpha_max, 2 * j - 1));
-                alpha_max = max(alpha_max, __shfl_xor_sync(FULL_MASK, alpha_max, j));
+                alpha_max = max(alpha_max, __shfl_xor_sync(FULL_MASK, alpha_max, 2 * j - 1));
+                // alpha_max = max(alpha_max, __shfl_xor_sync(FULL_MASK, alpha_max, j));
             }
-            alpha_max = __shfl_sync(FULL_MASK, alpha_max, lane_id&24);
+            // alpha_max = __shfl_sync(FULL_MASK, alpha_max, lane_id&24);
             alpha_max = max(alpha_max, softmax[cur_rid][sparse_rowid][0]);
             softmax[cur_rid][sparse_rowid][2] = alpha_max;
             float alpha_sum = static_cast<float>(valid) * __expf(alpha - alpha_max);
             float upper = alpha_sum;
             for (int j = 1; j < 8; j *= 2) {
-                // alpha_sum += __shfl_xor_sync(FULL_MASK, alpha_sum, 2 * j - 1);
-                alpha_sum += __shfl_xor_sync(FULL_MASK, alpha_sum, j);
+                alpha_sum += __shfl_xor_sync(FULL_MASK, alpha_sum, 2 * j - 1);
+                // alpha_sum += __shfl_xor_sync(FULL_MASK, alpha_sum, j);
             } 
-            alpha_sum = __shfl_sync(FULL_MASK, alpha_sum, lane_id&24);
+            // alpha_sum = __shfl_sync(FULL_MASK, alpha_sum, lane_id&24);
             alpha_sum = alpha_sum + softmax[cur_rid][sparse_rowid][1] * __expf(softmax[cur_rid][sparse_rowid][0] - alpha_max);
             softmax[cur_rid][sparse_rowid][3] = alpha_sum;
             sparse_X[(i+1)&3][sparse_rowid][(sparse_colid+(warp_id&1))&7] = upper / (alpha_sum + 1e-16f);
