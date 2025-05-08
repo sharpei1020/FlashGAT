@@ -14,6 +14,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("agnn_udf", &AGNN_UDF, "agnn_udf");
     m.def("agnn_short", &AGNN_short, "agnn_short");
     m.def("agnn_adaptive", &AGNN_adaptive, "agnn_adaptive");
+    m.def("agnn_csr", &AGNN_CSR, "agnn_csr");
     m.def("SDDMM", &SDDMM, "SDDMM");
     m.def("SDDMM_TCGNN", &SDDMM_TCGNN, "SDDMM_TCGNN");
     m.def("agnn_divide", &AGNN_divide, "AGNN_divide");
@@ -22,10 +23,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("gat_balance", &GAT_balance, "gat_balance");
     m.def("gat_short", &GAT_short, "gat_short");
     m.def("gat_adaptive", &GAT_adaptive, "gat_adaptive");
+    m.def("gat_csr", &GAT_CSR, "gat_csr");
     m.def("sputnik_gat", &sputnik_GAT, "sputnik_gat");
     m.def("sputnik_agnn", &sputnik_AGNN, "sputnik_agnn");
     m.def("preprocess_CSR", &preprocess_CSR, "preprocess_CSR(with counts)");
-    m.def("process_CSR", &process_CSR, "process_CSR(without counts)");
+    m.def("process_CSR", &process_CSR, "process_CSR");
     m.def("get_graph_set", &get_graph_set, "get_graph_set");
     m.def("process_DTC", &process_DTC, "process_DTC");
     m.def("process_DTC_short_mask", &process_DTC_short_mask, "process_DTC_short_mask");

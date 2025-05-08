@@ -4,6 +4,7 @@
 #include <cuda_runtime.h>
 
 #define FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
+#define FLOAT2(pointer) (reinterpret_cast<float2*>(&(pointer))[0])
 
 at::Tensor AGNN(
     at::Tensor x,
@@ -13,6 +14,13 @@ at::Tensor AGNN(
     at::Tensor SparseAToX,
     at::Tensor beta,
     int out_feats
+);
+
+at::Tensor AGNN_CSR(
+    at::Tensor feature,
+    at::Tensor beta,
+    at::Tensor row_offset,
+    at::Tensor index
 );
 
 at::Tensor AGNN_short(

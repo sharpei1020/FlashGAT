@@ -135,10 +135,10 @@ class MyAGNNlayer_new(MyAGNNlayer):
         # out_ = mygraph.agnn_short(
         #     x, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.beta, self.feat_dim, 
         #     block_size[0], block_size[1])
-        # condition_out = torch.all(torch.abs(out_ - out) < 1e-1, dim=-1).cpu()
+        # condition_out = torch.all(torch.abs(out_ - out) < 1, dim=-1).cpu()
         # idxs = torch.nonzero(torch.where(condition_out, torch.zeros(condition_out.shape), torch.ones(condition_out.shape)))
-        # print(out_[0], out[0])
-        # print(idxs.shape[0], idxs, x.shape[0])
+        # print(out_[idxs[:1]], out[idxs[:1]])
+        # print(idxs.shape[0], idxs.squeeze(), x.shape[0])
         # # print(idxs.shape[0], x.shape[0], idxs[:100])
         # assert(torch.all(condition_out).item())
         return mygraph.agnn_short(
@@ -168,7 +168,7 @@ class MyAGNNlayer_adaptive(MyAGNNlayer):
     def __init__(self, 
                  feat_dim, reuires_grad=True):
         super(MyAGNNlayer_adaptive, self).__init__(feat_dim, reuires_grad)
-        self.test_conv = AGNNConv(requires_grad=reuires_grad)
+        # self.test_conv = AGNNConv(requires_grad=reuires_grad)
         
     def reset_parameters(self):
         if self.require_grad:
@@ -178,22 +178,44 @@ class MyAGNNlayer_adaptive(MyAGNNlayer):
         # adj_ = SparseTensor(row=adj[0], col=adj[1], sparse_sizes=(x.size(0), x.size(0))).cuda()
         # out = self.test_conv(x, adj_)
         # out_= mygraph.agnn_adaptive(x, self.beta, *param)
-        # condition_out = torch.all(torch.abs(out_ - out) < 1e-1, dim=-1).cpu()
+        # condition_out = torch.all(torch.abs(out_ - out) < 0.1, dim=-1).cpu()
         # idxs = torch.nonzero(torch.where(condition_out, torch.zeros(condition_out.shape), torch.ones(condition_out.shape)))
-        # # idxs = torch.nonzero(torch.where(condition_out, torch.ones(condition_out.shape), torch.zeros(condition_out.shape)))
-        # print(out_[idxs[0]], out[idxs[0]])
-        # print(idxs.shape[0], x.shape[0], idxs)
+        # idxs = torch.nonzero(torch.where(condition_out, torch.ones(condition_out.shape), torch.zeros(condition_out.shape)))
+        # print(torch.max(torch.abs(out_[idxs[:1]]-out[idxs[:1]])))
+        # print(idxs.shape[0], x.shape[0], idxs.reshape(-1))
         # assert(torch.all(condition_out).item())
         return mygraph.agnn_adaptive(x, self.beta, *param)
-
-class MyAGNN_adaptive(nn.Module):
+    
+class MyAGNNlayer_csr(MyAGNNlayer):
     def __init__(self, 
-                 in_dim, hidden_dim, out_dim):
-        super(MyAGNN_adaptive, self).__init__()
+                 feat_dim, reuires_grad=True):
+        super(MyAGNNlayer_csr, self).__init__(feat_dim, reuires_grad)
+        self.test_conv = AGNNConv(requires_grad=reuires_grad)
+        
+    def reset_parameters(self):
+        if self.require_grad:
+            self.beta.data.fill_(1)
+
+    def forward(self, x, adj, *param):
+        # adj_ = SparseTensor(row=adj[0], col=adj[1], sparse_sizes=(x.size(0), x.size(0))).cuda()
+        # out = self.test_conv(x, adj_)
+        # out_= mygraph.agnn_csr(x, self.beta, *param)
+        # condition_out = torch.all(torch.abs(out_ - out) < 0.1, dim=-1).cpu()
+        # idxs = torch.nonzero(torch.where(condition_out, torch.zeros(condition_out.shape), torch.ones(condition_out.shape)))
+        # print(condition_out, idxs)
+        # print(out_[idxs[:1]], out[idxs[:1]])
+        # print(idxs.shape[0], x.shape[0], idxs.reshape(-1))
+        # assert(torch.all(condition_out).item())
+        return mygraph.agnn_csr(x, self.beta, *param)
+
+class MyAGNN(nn.Module):
+    def __init__(self, 
+                 in_dim, hidden_dim, out_dim, agnn_layer):
+        super(MyAGNN, self).__init__()
         self.lin1 = nn.Linear(in_dim, hidden_dim)  
         self.convs = torch.nn.ModuleList()
         for _ in range(4):
-            self.convs.append(MyAGNNlayer_adaptive(hidden_dim, False))
+            self.convs.append(agnn_layer(hidden_dim, False))
         self.lin2 = nn.Linear(hidden_dim, out_dim)
         self.relu = nn.ReLU(True)
     

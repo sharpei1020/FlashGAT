@@ -182,7 +182,7 @@ __global__ void gat_kernel_8x16_64(
     int bid = RowWindowId[blockIdx.x];
     int lane_id = threadIdx.x & 31;
     int warp_id = threadIdx.x >> 5; // 1 bit
-    int block_start = RowWindowRowOffset[bid];
+    int block_start = RowWindowBlockOffset[bid];
     int block_num = RowWindowBlockOffset[bid+1] - RowWindowBlockOffset[bid];
     int row_off = RowWindowRowOffset[bid];
     int sparseAToX_off = RowWindowSparseAToXOffset[bid];
@@ -813,10 +813,10 @@ __global__ void gat_kernel_8x8_64_2_(
         {
             uint32_t B[8], A[2];
             for (int k=0; k<8; k++) {
-                if (SparseAToX_idx[i&1][(lane_id&3)+(k&2)*2] < node_num)
-                    asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(dense[i&1][(lane_id&3)+(k&2)*2][(warp_id*32+(k&3)*8+((k&4)+(lane_id&3))*4+(lane_id>>2))&63]));
-                else
-                    asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(0.f)); 
+                // if (SparseAToX_idx[i&1][(lane_id&3)+(k&2)*2] < node_num)
+                asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(dense[i&1][(lane_id&3)+(k&2)*2][(warp_id*32+(k&3)*8+((k&4)+(lane_id&3))*4+(lane_id>>2))&63]));
+                // else
+                //     asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(0.f)); 
             }
             for (int j = 0; j < 2; j++)
                 asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(A[j]) : "f"(sparse_A[i&1][lane_id>>2][(lane_id&3)+j*4])); 
@@ -841,10 +841,10 @@ __global__ void gat_kernel_8x8_64_2_(
     {
         uint32_t B[8], A[2];
         for (int k=0; k<8; k++) {
-            if (SparseAToX_idx[i&1][(lane_id&3)+(k&2)*2] < node_num)
-                asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(dense[i&1][(lane_id&3)+(k&2)*2][(warp_id*32+(k&3)*8+((k&4)+(lane_id&3))*4+(lane_id>>2))&63]));
-            else
-                asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(0.f)); 
+            // if (SparseAToX_idx[i&1][(lane_id&3)+(k&2)*2] < node_num)
+            asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(dense[i&1][(lane_id&3)+(k&2)*2][(warp_id*32+(k&3)*8+((k&4)+(lane_id&3))*4+(lane_id>>2))&63]));
+            // else
+            //     asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(0.f)); 
         }
         for (int j = 0; j < 2; j++)
             asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(A[j]) : "f"(sparse_A[i&1][lane_id>>2][(lane_id&3)+j*4])); 
@@ -983,13 +983,13 @@ __global__ void gat_kernel_8x16_64_2_(
             for (int j=0; j<2; j++) {
                 for (int k=0; k<2; k++) {
                     for (int l=0; l<2; l++) {
-                        if (SparseAToX_idx[i&1][(lane_id&3)+(k*2+l)*4] < node_num) {
-                            asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2]) : "f"(dense[i&1][(lane_id&3)+(k*2+l)*4][(warp_id*32+(k*2+l+j)*16+(lane_id&3)*4+(lane_id>>2))&63]));
-                            asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2+1]) : "f"(dense[i&1][(lane_id&3)+(k*2+l)*4][(warp_id*32+(k*2+l+j)*16+8+(lane_id&3)*4+(lane_id>>2))&63]));
-                        } else {
-                            asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2]) : "f"(0.f));
-                            asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2+1]) : "f"(0.f));
-                        }
+                        // if (SparseAToX_idx[i&1][(lane_id&3)+(k*2+l)*4] < node_num) {
+                        asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2]) : "f"(dense[i&1][(lane_id&3)+(k*2+l)*4][(warp_id*32+(k*2+l+j)*16+(lane_id&3)*4+(lane_id>>2))&63]));
+                        asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2+1]) : "f"(dense[i&1][(lane_id&3)+(k*2+l)*4][(warp_id*32+(k*2+l+j)*16+8+(lane_id&3)*4+(lane_id>>2))&63]));
+                        // } else {
+                        //     asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2]) : "f"(0.f));
+                        //     asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2+1]) : "f"(0.f));
+                        // }
                         asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(A[l]) : "f"(sparse_A[i&1][lane_id>>2][(lane_id&3)+(k*2+l)*4]));
                     }
                     asm volatile("mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%10, %11, %12, %13};\n"
@@ -1016,13 +1016,13 @@ __global__ void gat_kernel_8x16_64_2_(
         for (int j=0; j<2; j++) {
             for (int k=0; k<2; k++) {
                 for (int l=0; l<2; l++) {
-                    if (SparseAToX_idx[i&1][(lane_id&3)+(k*2+l)*4] < node_num) {
-                        asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2]) : "f"(dense[i&1][(lane_id&3)+(k*2+l)*4][(warp_id*32+(k*2+l+j)*16+(lane_id&3)*4+(lane_id>>2))&63]));
-                        asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2+1]) : "f"(dense[i&1][(lane_id&3)+(k*2+l)*4][(warp_id*32+(k*2+l+j)*16+8+(lane_id&3)*4+(lane_id>>2))&63]));
-                    } else {
-                        asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2]) : "f"(0.f));
-                        asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2+1]) : "f"(0.f));
-                    }
+                    // if (SparseAToX_idx[i&1][(lane_id&3)+(k*2+l)*4] < node_num) {
+                    asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2]) : "f"(dense[i&1][(lane_id&3)+(k*2+l)*4][(warp_id*32+(k*2+l+j)*16+(lane_id&3)*4+(lane_id>>2))&63]));
+                    asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2+1]) : "f"(dense[i&1][(lane_id&3)+(k*2+l)*4][(warp_id*32+(k*2+l+j)*16+8+(lane_id&3)*4+(lane_id>>2))&63]));
+                    // } else {
+                    //     asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2]) : "f"(0.f));
+                    //     asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[l*2+1]) : "f"(0.f));
+                    // }
                     asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(A[l]) : "f"(sparse_A[i&1][lane_id>>2][(lane_id&3)+(k*2+l)*4]));
                 }
                 asm volatile("mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32 {%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%10, %11, %12, %13};\n"
@@ -1087,10 +1087,10 @@ __global__ void gat_kernel_16x8_64_2_(
         asm volatile("cp.async.ca.shared.global [%0], [%1], 16;" : : "r"(cur_addr), "l"(&feat[min(SparseAToX_idx[(i+1)&1][thread_4_7], node_num-1)*64+4*lane_0_4]));
         asm volatile("cp.async.commit_group;\n"::);
         for (int k = 0; k < 4; k++) {
-            if (SparseAToX_idx[i&1][(lane_id&3)+(k&2)*2] < node_num)
-                asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(dense[i&1][(lane_id&3)+(k&2)*2][warp_id*16+(k&1)*8+(lane_id>>2)]));
-            else
-                asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(0.f));
+            // if (SparseAToX_idx[i&1][(lane_id&3)+(k&2)*2] < node_num)
+            asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(dense[i&1][(lane_id&3)+(k&2)*2][warp_id*16+(k&1)*8+(lane_id>>2)]));
+            // else
+            //     asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(0.f));
         }
         // softmax
         {
@@ -1152,10 +1152,10 @@ __global__ void gat_kernel_16x8_64_2_(
     }
     i = block_end - 1;
     for (int k = 0; k < 4; k++) {
-        if (SparseAToX_idx[i&1][(lane_id&3)+(k&2)*2] < node_num)
-            asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(dense[i&1][(lane_id&3)+(k&2)*2][warp_id*16+(k&1)*8+(lane_id>>2)]));
-        else
-            asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(0.f));
+        // if (SparseAToX_idx[i&1][(lane_id&3)+(k&2)*2] < node_num)
+        asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(dense[i&1][(lane_id&3)+(k&2)*2][warp_id*16+(k&1)*8+(lane_id>>2)]));
+        // else
+        //     asm volatile("cvt.rna.tf32.f32 %0, %1;\n" : "=r"(B[k]) : "f"(0.f));
     }
     // softmax
     {
@@ -1435,11 +1435,10 @@ at::Tensor GAT_adaptive(
     int block_16x8 = RowWindowId_16x8.size(0);
     int block_16x16 = RowWindowId_16x16.size(0);
     uint8_t select = (block_8x8>0)+(block_8x16>0)*(1<<1)+(block_16x8>0)*(1<<2)+(block_16x16>0)*(1<<3);
-    cudaStream_t stream[4];
-    cudaStreamCreateWithFlags(&stream[0], cudaStreamNonBlocking);
-    cudaStreamCreateWithFlags(&stream[1], cudaStreamNonBlocking);
-    cudaStreamCreateWithFlags(&stream[2], cudaStreamNonBlocking);
-    cudaStreamCreateWithFlags(&stream[3], cudaStreamNonBlocking);
+    // int cnt = std::__popcount(select) - 1;
+    // cudaStream_t stream[cnt];
+    // for (int i = 0; i < cnt; i++)
+    //     cudaStreamCreateWithFlags(&stream[i], cudaStreamNonBlocking);
     switch(select) {
         case 1:
             gat_kernel_8x8_64_2_<<<block_8x8, 64>>>(
@@ -1494,7 +1493,7 @@ at::Tensor GAT_adaptive(
                 num_nodes);
             break;
         case 3:
-            gat_kernel_8x8_64<<<block_8x8, 64, 0, stream[0]>>>(
+            gat_kernel_8x8_64<<<block_8x8, 64>>>(
                 RowWindowId_8x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1509,7 +1508,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_8x8_64<<<block_8x16, 64, 0, stream[1]>>>(
+            //, 0, stream[0]
+            gat_kernel_8x16_64<<<block_8x16, 64>>>(
                 RowWindowId_8x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1524,9 +1524,10 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
+            // cudaStreamSynchronize(stream[0]);
             break;
         case 5:
-            gat_kernel_8x8_64<<<block_8x8, 64, 0, stream[0]>>>(
+            gat_kernel_8x8_64<<<block_8x8, 64>>>(
                 RowWindowId_8x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1541,7 +1542,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x8_64<<<block_16x8, 128, 0, stream[1]>>>(
+            //, 0, stream[0]
+            gat_kernel_16x8_64<<<block_16x8, 128>>>(
                 RowWindowId_16x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1556,9 +1558,10 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
+            // cudaStreamSynchronize(stream[0]);
             break;
         case 9:
-            gat_kernel_8x8_64<<<block_8x8, 64, 0, stream[0]>>>(
+            gat_kernel_8x8_64<<<block_8x8, 64>>>(
                 RowWindowId_8x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1573,7 +1576,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x16_64<<<block_16x16, 128, 0, stream[1]>>>(
+            //, 0, stream[0]
+            gat_kernel_16x16_64<<<block_16x16, 128>>>(
                 RowWindowId_16x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1588,9 +1592,10 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
+            // cudaStreamSynchronize(stream[0]);
             break;
         case 6:
-            gat_kernel_8x16_64<<<block_8x16, 64, 0, stream[0]>>>(
+            gat_kernel_8x16_64<<<block_8x16, 64>>>(
                 RowWindowId_8x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1605,7 +1610,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x8_64<<<block_16x8, 128, 0, stream[1]>>>(
+            //, 0, stream[0]
+            gat_kernel_16x8_64<<<block_16x8, 128>>>(
                 RowWindowId_16x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1620,9 +1626,10 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
+            // cudaStreamSynchronize(stream[0]);
             break;
         case 10:
-            gat_kernel_8x16_64<<<block_8x16, 64, 0, stream[0]>>>(
+            gat_kernel_8x16_64<<<block_8x16, 64>>>(
                 RowWindowId_8x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1637,7 +1644,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x16_64<<<block_16x16, 128, 0, stream[1]>>>(
+            //, 0, stream[0]
+            gat_kernel_16x16_64<<<block_16x16, 128>>>(
                 RowWindowId_16x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1652,9 +1660,10 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
+            // cudaStreamSynchronize(stream[0]);
             break;
         case 12:
-            gat_kernel_16x8_64<<<block_16x8, 128, 0, stream[0]>>>(
+            gat_kernel_16x8_64<<<block_16x8, 128>>>(
                 RowWindowId_16x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1669,7 +1678,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x16_64<<<block_16x16, 128, 0, stream[1]>>>(
+            //, 0, stream[0]
+            gat_kernel_16x16_64<<<block_16x16, 128>>>(
                 RowWindowId_16x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1684,9 +1694,10 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
+            // cudaStreamSynchronize(stream[0]);
             break;
         case 7:
-            gat_kernel_8x8_64<<<block_8x8, 64, 0, stream[0]>>>(
+            gat_kernel_8x8_64<<<block_8x8, 64>>>(
                 RowWindowId_8x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1701,7 +1712,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_8x16_64<<<block_8x16, 64, 0, stream[1]>>>(
+            //, 0, stream[0]
+            gat_kernel_8x16_64<<<block_8x16, 64>>>(
                 RowWindowId_8x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1716,7 +1728,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x8_64<<<block_16x8, 128, 0, stream[2]>>>(
+            //, 0, stream[1]
+            gat_kernel_16x8_64<<<block_16x8, 128>>>(
                 RowWindowId_16x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1731,9 +1744,11 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
+            // cudaStreamSynchronize(stream[0]);
+            // cudaStreamSynchronize(stream[1]);
             break;
         case 11:
-            gat_kernel_8x8_64<<<block_8x8, 64, 0, stream[0]>>>(
+            gat_kernel_8x8_64<<<block_8x8, 64>>>(
                 RowWindowId_8x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1748,7 +1763,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_8x16_64<<<block_8x16, 64, 0, stream[1]>>>(
+            //, 0, stream[0]
+            gat_kernel_8x16_64<<<block_8x16, 64>>>(
                 RowWindowId_8x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1763,7 +1779,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x16_64<<<block_16x16, 128, 0, stream[2]>>>(
+            //, 0, stream[1]
+            gat_kernel_16x16_64<<<block_16x16, 128>>>(
                 RowWindowId_16x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1778,9 +1795,11 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
+            // cudaStreamSynchronize(stream[0]);
+            // cudaStreamSynchronize(stream[1]);
             break;
         case 13:
-            gat_kernel_8x8_64<<<block_8x8, 64, 0, stream[0]>>>(
+            gat_kernel_8x8_64<<<block_8x8, 64>>>(
                 RowWindowId_8x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1795,7 +1814,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x8_64<<<block_16x8, 128, 0, stream[1]>>>(
+            //, 0, stream[0]
+            gat_kernel_16x8_64<<<block_16x8, 128>>>(
                 RowWindowId_16x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1810,7 +1830,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x16_64<<<block_16x16, 128, 0, stream[2]>>>(
+            //, 0, stream[1]
+            gat_kernel_16x16_64<<<block_16x16, 128>>>(
                 RowWindowId_16x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1825,9 +1846,11 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
+            // cudaStreamSynchronize(stream[0]);
+            // cudaStreamSynchronize(stream[1]);
             break;
         case 14:
-            gat_kernel_8x16_64<<<block_8x16, 64, 0, stream[0]>>>(
+            gat_kernel_8x16_64<<<block_8x16, 64>>>(
                 RowWindowId_8x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1842,7 +1865,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x8_64<<<block_16x8, 128, 0, stream[1]>>>(
+            //, 0, stream[0]
+            gat_kernel_16x8_64<<<block_16x8, 128>>>(
                 RowWindowId_16x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1857,7 +1881,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x16_64<<<block_16x16, 128, 0, stream[2]>>>(
+            //, 0, stream[1]
+            gat_kernel_16x16_64<<<block_16x16, 128>>>(
                 RowWindowId_16x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1872,9 +1897,11 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
+            // cudaStreamSynchronize(stream[0]);
+            // cudaStreamSynchronize(stream[1]);
             break;
         case 15:
-            gat_kernel_8x8_64<<<block_8x8, 64, 0, stream[0]>>>(
+            gat_kernel_8x8_64<<<block_8x8, 64>>>(
                 RowWindowId_8x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1889,7 +1916,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_8x16_64<<<block_8x16, 64, 0, stream[1]>>>(
+            //, 0, stream[0]
+            gat_kernel_8x16_64<<<block_8x16, 64>>>(
                 RowWindowId_8x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1904,7 +1932,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x8_64<<<block_16x8, 128, 0, stream[2]>>>(
+            //, 0, stream[1]
+            gat_kernel_16x8_64<<<block_16x8, 128>>>(
                 RowWindowId_16x8.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1919,7 +1948,8 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
-            gat_kernel_16x16_64<<<block_16x16, 128, 0, stream[3]>>>(
+            //, 0, stream[2]
+            gat_kernel_16x16_64<<<block_16x16, 128>>>(
                 RowWindowId_16x16.data_ptr<int>(),
                 RowWindowRowOffset.data_ptr<int>(),
                 RowWindowBlockOffset.data_ptr<int>(),
@@ -1934,6 +1964,9 @@ at::Tensor GAT_adaptive(
                 alpha_j.data_ptr<float>(),
                 output.data_ptr<float>(),
                 num_nodes);
+            // cudaStreamSynchronize(stream[0]);
+            // cudaStreamSynchronize(stream[1]);
+            // cudaStreamSynchronize(stream[2]);
             break;
         default:
             printf("Unsupported select: %d\n", select);

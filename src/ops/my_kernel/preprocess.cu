@@ -27,27 +27,40 @@ std::vector<at::Tensor> preprocess_CSR(at::Tensor edge_index, at::Tensor counts,
     return {offset, out_edge_index};
 }
 
-std::vector<at::Tensor> process_CSR(at::Tensor edge_index, int group, int num_nodes)
+std::vector<at::Tensor> process_CSR(at::Tensor edge_index, int num_nodes)
 {
     int num_edges = edge_index.size(1);
-    auto out_edge_index = at::empty({num_edges}, device(torch::kCUDA).dtype(torch::kInt));
-    thrust::sequence(thrust::device, out_edge_index.data_ptr<int>(), out_edge_index.data_ptr<int>() + num_edges);
+    auto index = at::empty({num_edges}, device(torch::kCUDA).dtype(torch::kInt));
+    thrust::copy(thrust::device, edge_index.data_ptr<int>(), edge_index.data_ptr<int>()+num_edges, index.data_ptr<int>());
     int *edge_index_1;
-    cudaMalloc(&edge_index_1, num_edges * sizeof(int));
-    thrust::copy(thrust::device, edge_index.data_ptr<int>() + num_edges, edge_index.data_ptr<int>() + 2 * num_edges, edge_index_1);
-    u_int32_t* value, *value1;
-    cudaMalloc(&value, num_edges * sizeof(u_int32_t));
-    cudaMalloc(&value1, num_edges * sizeof(u_int32_t));
-    thrust::transform(thrust::device, edge_index.data_ptr<int>(), edge_index.data_ptr<int>() + num_edges,
-                       edge_index.data_ptr<int>() + num_edges, value,
-                       [=] __device__ (int e0, int e1) {return ((uint32_t)(e1 / group) * (uint32_t)num_nodes + (uint32_t)e0);});
-    thrust::copy(thrust::device, value, value + num_edges, value1);
-    thrust::stable_sort_by_key(thrust::device, value, value + num_edges, out_edge_index.data_ptr<int>());
-    thrust::stable_sort_by_key(thrust::device, value1, value1 + num_edges, edge_index_1);
+    cudaMalloc(&edge_index_1, num_edges*sizeof(int));
+    thrust::copy(thrust::device, edge_index.data_ptr<int>()+num_edges, edge_index.data_ptr<int>()+2*num_edges, edge_index_1);
+    uint64_t *value, *value0;
+    cudaMalloc(&value, num_edges*sizeof(uint64_t));
+    thrust::transform(thrust::device, edge_index.data_ptr<int>(), edge_index.data_ptr<int>()+num_edges,
+                        edge_index.data_ptr<int>()+num_edges, value, [=]__device__(int e0, int e1) 
+                        {return (uint64_t)e1*(uint64_t)num_nodes+(uint64_t)e0;});
+    cudaMalloc(&value0, num_edges*sizeof(uint64_t));
+    thrust::copy(thrust::device, value, value+num_edges, value0);
+    thrust::stable_sort_by_key(thrust::device, value, value+num_edges, index.data_ptr<int>());
+    thrust::stable_sort_by_key(thrust::device, value0, value0+num_edges, edge_index_1);
     cudaFree(value);
-    cudaFree(value1);
-    auto row_idx = torch::from_blob(edge_index_1, {num_edges}, device(torch::kCUDA).dtype(torch::kInt32)).clone();
-    return {row_idx, out_edge_index};
+    cudaFree(value0);
+    int *mask, *unique_edge_index_1, *row_num;
+    cudaMalloc(&mask, num_edges*sizeof(int));
+    cudaMalloc(&unique_edge_index_1, num_nodes*sizeof(int));
+    cudaMalloc(&row_num, num_nodes*sizeof(int));
+    thrust::fill_n(thrust::device, mask, num_edges, 1);
+    auto row_offset = at::empty({num_nodes+1}, device(torch::kCUDA).dtype(torch::kInt));
+    auto end = thrust::reduce_by_key(thrust::device, edge_index_1, edge_index_1+num_edges, mask, 
+                        unique_edge_index_1, row_num);
+    thrust::fill_n(thrust::device, row_offset.data_ptr<int>(), num_nodes+1, 0);
+    thrust::scatter(thrust::device, row_num, end.second, unique_edge_index_1, row_offset.data_ptr<int>()+1);
+    thrust::inclusive_scan(thrust::device, row_offset.data_ptr<int>()+1, row_offset.data_ptr<int>()+1+num_nodes, row_offset.data_ptr<int>()+1);
+    cudaFree(mask);
+    cudaFree(unique_edge_index_1);
+    cudaFree(row_num);
+    return {row_offset, index};
 }
 
 std::vector<at::Tensor> get_graph_set(at::Tensor edge_index, int numwarps, int numnodes)
@@ -197,33 +210,32 @@ __global__ void BlockMaskShortKernel_2block(
     const int block_num
 ) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (2*tid >= block_num) return;
-    uint32_t start = TCOffset[2*tid];
-    uint32_t middle = TCOffset[2*tid+1];
-    uint32_t end = TCOffset[min(2*(tid+1),block_num-1)];
-    int write_start = BitMask_RowOffset[2*tid];
-    int write_middle = BitMask_RowOffset[2*tid + 1];
-    int write_end = BitMask_RowOffset[min(2*(tid + 1),block_num-1)];
+    int n = 8 / block_high;
+    if (n*tid >= block_num) return;
+    uint32_t start = TCOffset[n*tid];
+    uint32_t end = TCOffset[min(n*(tid+1),block_num)];
+    int write_start = BitMask_RowOffset[n*tid];
+    // int write_end = BitMask_RowOffset[min(n*(tid + 1),block_num)];
     int width_num = block_width / 8;
-    uint8_t col_mask[4] = {0};
+    uint8_t col_mask = 0;
     uint8_t row_mask[64] = {0};
     for (uint32_t i = start; i < end; i++) {
         int block_col = ((edge_index_0[i] - 1) & (block_width - 1));
-        int block_row = (edge_index_1[i] & (block_high - 1))+(int)(i >= middle)*block_high;
-        col_mask[block_row>>3] |= (1 << (block_row & 7));
+        int block_row = (edge_index_1[i] & (block_high - 1));
+        for (int j = 1; j < n; j++) {
+            if ((i < TCOffset[n*tid+j])||(n*tid+j>block_num))
+                break;
+            block_row += block_high;
+        }
+        col_mask |= (1 << (block_row & 7));
         row_mask[block_row*width_num + (block_col >> 3)] |= (1 << (block_col & 7));
     }
-    if (block_high == 8) 
-        *((uint8_t*)(&BlockMaskCol[tid])) = col_mask[0];
-    else if (block_high == 16) 
-        *((uint16_t*)(&BlockMaskCol[tid*2])) = *(uint16_t*)(&col_mask[0]);
-    else if (block_high == 32)
-        *((uint32_t*)(&BlockMaskCol[tid*4])) = *(uint32_t*)(&col_mask[0]);
-    int m = __popc(*(uint32_t*)(&col_mask[0]));
+    BlockMaskCol[tid] = col_mask;
+    int m = __popc(col_mask);
     for (int i = 1; i <= m; i++) {
-        int j = __fns(*(uint32_t*)(&col_mask[0]), 0, i);
+        int j = __fns(col_mask, 0, i);
         if (width_num == 1)
-            *(uint8_t*)(&BlockMaskRow[write_start + i - 1]) = row_mask[j];
+            BlockMaskRow[write_start + i - 1] = row_mask[j];
         else if (width_num == 2)
             *(uint16_t*)(&BlockMaskRow[(write_start + i - 1) * 2]) = *(uint16_t*)(&row_mask[j*2]);
         else if (width_num == 4)
@@ -528,7 +540,8 @@ std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_
     cudaFree(RowWindowNum_temp);
     cudaFree(RowWindowNum);
     //after generate aligned SparseAToX and RowWindowOffset
-    at::Tensor BitMask_col = at::empty({(block_num*(block_high/4)+1)/2}, device(torch::kCUDA).dtype(torch::kUInt8));
+    int colmask_num = (block_high/8)>0?block_num*(block_high/8):(block_num+(8/block_high-1))/(8/block_high);
+    at::Tensor BitMask_col = at::empty({colmask_num}, device(torch::kCUDA).dtype(torch::kUInt8));
     at::Tensor BitMask_RowOffset = at::empty({block_num+1}, device(torch::kCUDA).dtype(torch::kInt32));
     // printf("current block_num: %d\n", block_num);
     uint32_t *block_value, *BlockElementMask, *TCOffset;
@@ -537,6 +550,12 @@ std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_
     thrust::transform(thrust::device, SparseAidx, SparseAidx + edge_index.size(1), edge_idx1, block_value, 
                     [=] __device__ (int e0, int e1) {return ((uint32_t) (e1 / block_high) * (uint32_t) (num_nodes * block_high) + (uint32_t)((e0-1) / block_width * block_high) + (e1 % block_high));});
     // printf("after transform5.\n");
+    ///////////////////////////////////////////////
+    // uint32_t* max_block_value_ptr = thrust::max_element(thrust::device, block_value, block_value+edge_index.size(1));
+    // uint32_t max_block_value;
+    // cudaMemcpy(&max_block_value, max_block_value_ptr, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    // printf("max_block_value: %ld\n", max_block_value);
+    ///////////////////////////////////////////////
     thrust::sort(thrust::device, block_value, block_value + edge_index.size(1));
     auto block_value_end = thrust::unique(thrust::device, block_value, block_value + edge_index.size(1));
     int block_value_len = block_value_end - block_value;
@@ -564,6 +583,12 @@ std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_
     thrust::inclusive_scan(thrust::device, TCOffset + 1, TCOffset + 1 + block_num, TCOffset + 1);
     int mask_num;
     cudaMemcpy(&mask_num, BitMask_RowOffset.data_ptr<int>() + block_num, sizeof(int), cudaMemcpyDeviceToHost);
+    ///////////////////////////////////////////////////////////////////
+    // int* max_BitMask_RowOffset_ptr = thrust::max_element(thrust::device, BitMask_RowOffset.data_ptr<int>(), BitMask_RowOffset.data_ptr<int>()+block_num+1);
+    // int max_BitMask_RowOffset;
+    // cudaMemcpy(&max_BitMask_RowOffset, max_BitMask_RowOffset_ptr, sizeof(int), cudaMemcpyDeviceToHost);
+    // printf("max_BitMask_RowOffset: %d\n", max_BitMask_RowOffset);
+    ///////////////////////////////////////////////////////////////////
     //BlockColMask
     // printf("current mask_num: %d\n", mask_num);
     at::Tensor BitMask_row = at::empty({mask_num*(block_width/8)}, device(torch::kCUDA).dtype(torch::kUInt8));
@@ -578,8 +603,9 @@ std::vector<at::Tensor> process_DTC_short_mask(at::Tensor edge_index, int block_
                                     BitMask_row.data_ptr<uint8_t>(),
                                     block_high, block_width, block_num);
     } else {
-        int grid = ((block_num + 1) / 2 + 127) / 128;
-        // block_high = 4
+        int n = 8 / block_high;
+        int grid = ((block_num + (n-1)) / n + 127) / 128;
+        // block_high <= 4
         BlockMaskShortKernel_2block<<<grid, 128>>>(SparseAidx, 
                                     edge_idx1, 
                                     TCOffset, 
@@ -616,17 +642,17 @@ __global__ void select_blocksize(
     int col_16 = col_num_16[idx];
     int col_8_0 = col_num_8[2*idx];
     int col_8_1 = (2*idx+1>=len_)?0:col_num_8[2*idx+1];
-    int block_width_16; 
-    int block_width_8_0, block_width_8_1;
-    if (boundary>12.f) {
-        block_width_16 = 16; //((col_16 + 15) / 16 == 1) ? 8 : 16;
-        block_width_8_0 = (col_8_0 <= 24) ? 8 : 16;
-        block_width_8_1 = (col_8_1 <= 24) ? 8 : 16;
-    } else {
-        block_width_16 = 16;
-        block_width_8_0 = (col_8_0 > 16) ? 16 : 8;
-        block_width_8_1 = (col_8_1 > 16) ? 16 : 8;
-    }
+    // int block_width_16; 
+    // int block_width_8_0, block_width_8_1;
+    // if (boundary>7.f) {
+    int block_width_16 = 16; //((col_16 + 15) / 16 == 1) ? 8 : 16;
+    int block_width_8_0 = 16; //(col_8_0 <= 8) ? 8 : 16;
+    int block_width_8_1 = 16; //(col_8_1 <= 8) ? 8 : 16;
+    // } else {
+    //     block_width_16 = 16;
+    //     block_width_8_0 = (col_8_0 > 16) ? 16 : 8;
+    //     block_width_8_1 = (col_8_1 > 16) ? 16 : 8;
+    // }
     int padding_col_16 = (col_16 + block_width_16 - 1) / block_width_16 * block_width_16;
     int padding_col_8_0 = (col_8_0 + block_width_8_0 - 1) / block_width_8_0 * block_width_8_0;
     int padding_col_8_1 = (col_8_1 + block_width_8_1 - 1) / block_width_8_1 * block_width_8_1;
@@ -915,10 +941,18 @@ std::vector<at::Tensor> adaptive_ASC(at::Tensor edge_index, const std::string &m
     thrust::inclusive_scan(thrust::device, RowWindowSparseAToXOffset.data_ptr<int>()+1, RowWindowSparseAToXOffset.data_ptr<int>()+rownum+1,
                             RowWindowSparseAToXOffset.data_ptr<int>()+1);
     cudaMalloc(&rowwindow_rownum, (node_num_row+7)/8*sizeof(int));
-    thrust::inclusive_scan(thrust::device, block_high_array, block_high_array+(node_num_row+7)/8, rowwindow_rownum);
+    thrust::copy(thrust::device, block_high_array, block_high_array+(node_num_row+7)/8, rowwindow_rownum);
+    thrust::inclusive_scan(thrust::device, rowwindow_rownum, rowwindow_rownum + (node_num_row+7)/8, rowwindow_rownum);
     cudaMalloc(&rowwindow_id_, (node_num_row+7)/8*sizeof(int));
     thrust::copy_n(thrust::device, rowwindow_id, (node_num_row+7)/8, rowwindow_id_);
     auto rowwindow_rownum_end = thrust::unique_by_key(thrust::device, rowwindow_id, rowwindow_id+(node_num_row+7)/8, rowwindow_rownum);
+    ////////////////////////////////////////////////////////////
+    // printf("block_high_array_len: %d, rowwindow_rownum: %d, rownum: %d\n", (node_num_row+7)/8, rowwindow_rownum_end.second-rowwindow_rownum, rownum);
+    // int* max_rowwindow_rownum = thrust::max_element(thrust::device, rowwindow_rownum, rowwindow_rownum_end.second);
+    // int max_rowwindow_rownum_value;
+    // cudaMemcpy(&max_rowwindow_rownum_value, max_rowwindow_rownum, sizeof(int), cudaMemcpyDeviceToHost);
+    // printf("max_rowwindow_rownum: %d\n", max_rowwindow_rownum_value);
+    ////////////////////////////////////////////////////////////
     cudaFree(rowwindow_id);
     at::Tensor RowWindowRowOffset = torch::empty({rownum+1}, device(torch::kCUDA).dtype(torch::kInt32));
     cudaMemset(RowWindowRowOffset.data_ptr<int>(), 0, sizeof(int));

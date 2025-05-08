@@ -271,10 +271,10 @@ class MyGATlayer_new(MyGATlayer):
         out = mygraph.gat_short(x, RowWindowOffsets, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask, self.lin.weight,\
                                   self.att_i.data, self.att_j.data, self._num_heads, self._out_feats, block_size[0], block_size[1])
 ######################################################################        
-        # condition_out = torch.all(torch.abs(out_ - out) < 0.1, dim=-1).cpu()
+        # condition_out = torch.all(torch.abs(out_ - out) < 1e-1, dim=-1).cpu()
         # idxs = torch.nonzero(torch.where(condition_out, torch.zeros(condition_out.shape), torch.ones(condition_out.shape)))
         # print(out[idxs[:1]], out_[idxs[:1]])
-        # print(out[idxs[7]], out_[idxs[7]])
+        # # print(out[idxs[7]], out_[idxs[7]])
         # print(len(idxs), idxs.squeeze()[:50])
         # assert len(idxs) == 0
         return out
@@ -342,20 +342,72 @@ class MyGATlayer_adaptive(MyGATlayer):
         # condition_out = torch.all(torch.abs(out_ - out) < 0.1, dim=-1).cpu()
         # idxs = torch.nonzero(torch.where(condition_out, torch.zeros(condition_out.shape), torch.ones(condition_out.shape)))
         # print(out[idxs[:1]], out_[idxs[:1]])
-        # print(out[idxs[7]], out_[idxs[7]])
+        # # print(out[idxs[7]], out_[idxs[7]])
         # print(len(idxs), idxs.squeeze()[:50])
         # assert len(idxs) == 0
         return out
 
-class MyGAT_adaptive(nn.Module):
+class MyGATlayer_csr(MyGATlayer):
+    def __init__(self,
+                 in_feats,
+                 out_feats,
+                 num_heads,
+                 concat=True,
+                 dropout=0.,
+                 activation=None):
+        super(MyGATlayer_csr, self).__init__(in_feats,
+                 out_feats,
+                 num_heads)
+
+    def reset_parameters(self):
+        glorot(self.lin.weight)
+        glorot(self.att_i)
+        glorot(self.att_j)
+
+    def forward(self, x, edge_index, *param):
+        # class Container(torch.nn.Module):
+        #     def __init__(self, mydata):
+        #         super(Container, self).__init__()
+        #         for key, value in mydata.items():
+        #             self.register_buffer(key, value)
+
+        # mydata = {"x": x, "RowWindowOffset": RowWindowOffsets, "BitMaskRowOffset": BitMaskRowOffset, 
+        #           "BitColMask": BitColMask, "BitRowMask": BitRowMask,"SparseAToX": SparseAToX}
+        
+        # container = torch.jit.script(Container(mydata))
+        # torch.jit.save(container, f"data_16x16.pt")
+        # import os
+        # os._exit(0)
+##################################################################
+        # if torch.is_tensor(x):
+        #     # x_ = self.dropout(x)
+        #     x_ = self.lin(x)
+        #     x_ = (x_, x_)
+        # else:
+        #     x_ = (self.dropout(x[0]), self.dropout(x[1]))
+        #     x_ = (self.lin(x_[0]), self.lin(x_[1]))
+
+        # out_ = self.propagate(edge_index, x=x_)
+        out = mygraph.gat_csr(x, self.lin.weight,self.att_i.data, self.att_j.data, *param)
+######################################################################        
+        # condition_out = torch.all(torch.abs(out_ - out) < 0.1, dim=-1).cpu()
+        # idxs = torch.nonzero(torch.where(condition_out, torch.zeros(condition_out.shape), torch.ones(condition_out.shape)))
+        # print(out[idxs[:1]], out_[idxs[:1]])
+        # # print(out[idxs[7]], out_[idxs[7]])
+        # print(len(idxs), idxs.squeeze()[:50])
+        # assert len(idxs) == 0
+        return out
+
+
+class MyGAT(nn.Module):
     def __init__(self,
                  in_dim,
                  hidden_dim,
-                 out_dim):
-        super(MyGAT_adaptive, self).__init__()
+                 out_dim, mygat_layer):
+        super(MyGAT, self).__init__()
 
-        self.conv1 = MyGATlayer_adaptive(in_dim, hidden_dim, 1)
-        self.conv2 = MyGATlayer_adaptive(hidden_dim, out_dim, 1)
+        self.conv1 = mygat_layer(in_dim, hidden_dim, 1)
+        self.conv2 = mygat_layer(hidden_dim, out_dim, 1)
 
     def forward(self, x, *param):
         h = self.conv1(x, *param)

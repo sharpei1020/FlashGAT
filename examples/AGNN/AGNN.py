@@ -15,7 +15,7 @@ from AGNN_PyG import AGNN_PyG
 from AGNN_DGL import AGNN_DGL
 from ctypes import cdll
 cdll.LoadLibrary('/home/ljq/mine/graphiler/src/build/sputnik/libsputnik.so')
-from AGNN_MY import MyAGNN, SputnikAGNN, MyAGNN_new, MyAGNN_adaptive
+from AGNN_MY import MyAGNN, SputnikAGNN, MyAGNN_new, MyAGNN, MyAGNNlayer_adaptive, MyAGNNlayer_csr
 from AGNN_UDF import UDFAGNN
 import pandas as pd
 import mygraph
@@ -29,7 +29,7 @@ from torch_geometric.utils import softmax
 n_heads = 1
 device = setup()
 
-USE_DGL_DATASET = False
+USE_DGL_DATASET = True
 
 # BREAK_FLAG = 2
 
@@ -434,34 +434,48 @@ def profile(dataset_name, feat_dim, repeat=1000):
         self = torch.vstack([torch.arange(0, node_num).type(torch.IntTensor)] * 2).to(device)
         # adj_0 = torch.unique(torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
         # adj_1 = torch.unique(torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
-        adj_2 = torch.unique(torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
+        # adj_2 = torch.unique(torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
         # adj_3 = torch.unique(torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
+        adj_4 = torch.unique(torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
+        adj_5 = torch.unique(torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
         # RowWindowOffset_, BitMaskRowOffset_, BitColMask_, BitRowMask_, SparseAToX_ = mygraph.process_DTC_short_mask(adj_0, 16, 8, node_num, False)
         # net_ = MyAGNN_new(feat_dim, DIM, DIM, (16, 8)).to(device)
         # RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX = mygraph.process_DTC_short_mask(adj_1, 16, 16, node_num, False)
         # net = MyAGNN_new(feat_dim, DIM, DIM, (16, 16)).to(device)
-        RowWindowOffset__, BitMaskRowOffset__, BitColMask__, BitRowMask__, SparseAToX__ = mygraph.process_DTC_short_mask(adj_2, 8, 16, node_num, False)
-        net__ = MyAGNN_new(feat_dim, DIM, DIM, (8, 16)).to(device)
+        # RowWindowOffset__, BitMaskRowOffset__, BitColMask__, BitRowMask__, SparseAToX__ = mygraph.process_DTC_short_mask(adj_2, 8, 16, node_num, False)
+        # net__ = MyAGNN_new(feat_dim, DIM, DIM, (8, 16)).to(device)
         # RowWindowOffset_1, BitMaskRowOffset_1, BitColMask_1, BitRowMask_1, SparseAToX_1 = mygraph.process_DTC_short_mask(adj_3, 8, 8, node_num, False)
         # net_1 = MyAGNN_new(feat_dim, DIM, DIM, (8, 8)).to(device)
+        RowWindowOffset_2, BitMaskRowOffset_2, BitColMask_2, BitRowMask_2, SparseAToX_2 = mygraph.process_DTC_short_mask(adj_4, 4, 8, node_num, False)
+        net_2 = MyAGNN_new(feat_dim, DIM, DIM, (4, 8)).to(device)
+        RowWindowOffset_3, BitMaskRowOffset_3, BitColMask_3, BitRowMask_3, SparseAToX_3 = mygraph.process_DTC_short_mask(adj_5, 2, 16, node_num, False)
+        net_3 = MyAGNN_new(feat_dim, DIM, DIM, (2, 16)).to(device)
         # net_.eval()
         # net.eval()
-        net__.eval()
+        # net__.eval()
         # net_1.eval()
+        net_2.eval()
+        net_3.eval()
         with torch.no_grad():
             # bench(net=net_, net_params=(features, adj_, RowWindowOffset_, SparseAToX_, BitMaskRowOffset_, BitColMask_, BitRowMask_), 
             #         tag="3-myagnn_new-1608", nvprof=False, repeat=repeat, memory=True, log=log)
             # bench(net=net, net_params=(features, adj_, RowWindowOffset, SparseAToX, BitMaskRowOffset, BitColMask, BitRowMask), 
             #         tag="3-myagnn_new-1616", nvprof=False, repeat=repeat, memory=True, log=log)
-            bench(net=net__, net_params=(features, adj_, RowWindowOffset__, SparseAToX__, BitMaskRowOffset__, BitColMask__, BitRowMask__), 
-                    tag="3-myagnn_new-816", nvprof=False, repeat=repeat, memory=True, log=log)
+            # bench(net=net__, net_params=(features, adj_, RowWindowOffset__, SparseAToX__, BitMaskRowOffset__, BitColMask__, BitRowMask__), 
+            #         tag="3-myagnn_new-816", nvprof=False, repeat=repeat, memory=True, log=log)
             # bench(net=net_1, net_params=(features, adj_, RowWindowOffset_1, SparseAToX_1, BitMaskRowOffset_1, BitColMask_1, BitRowMask_1), 
             #         tag="3-myagnn_new-808", nvprof=False, repeat=repeat, memory=True, log=log)
+            bench(net=net_2, net_params=(features, adj_, RowWindowOffset_2, SparseAToX_2, BitMaskRowOffset_2, BitColMask_2, BitRowMask_2), 
+                    tag="3-myagnn_new-408", nvprof=False, repeat=repeat, memory=True, log=log)
+            bench(net=net_3, net_params=(features, adj_, RowWindowOffset_3, SparseAToX_3, BitMaskRowOffset_3, BitColMask_3, BitRowMask_3), 
+                    tag="3-myagnn_new-216", nvprof=False, repeat=repeat, memory=True, log=log)
         del adj, node_num, \
         # adj_0, RowWindowOffset_, BitMaskRowOffset_, BitColMask_, BitRowMask_, SparseAToX_, net_,\
         # adj_1, RowWindowOffset, BitMaskRowOffset, BitColMask, BitRowMask, SparseAToX, net, \
-        adj_2, RowWindowOffset__, BitMaskRowOffset__, BitColMask__, BitRowMask__, SparseAToX__, net__,\
-        # adj_3, RowWindowOffset_1, BitMaskRowOffset_1, BitColMask_1, BitRowMask_1, SparseAToX_1, net_1
+        # adj_2, RowWindowOffset__, BitMaskRowOffset__, BitColMask__, BitRowMask__, SparseAToX__, net__,\
+        # adj_3, RowWindowOffset_1, BitMaskRowOffset_1, BitColMask_1, BitRowMask_1, SparseAToX_1, net_1,\
+        adj_4, RowWindowOffset_2, BitMaskRowOffset_2, BitColMask_2, BitRowMask_2, SparseAToX_2, net_2, \
+        adj_5, RowWindowOffset_3, BitMaskRowOffset_3, BitColMask_3, BitRowMask_3, SparseAToX_3, net_3
     
     @empty_cache
     def run_myagnn_adaptive(dataset, features):
@@ -477,19 +491,41 @@ def profile(dataset_name, feat_dim, repeat=1000):
         self = torch.vstack([torch.arange(0, node_num).type(torch.IntTensor)] * 2).to(device)
         adj = torch.unique(torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
         params = mygraph.adaptive_ASC(adj, "agnn", node_num, node_num)
-        net = MyAGNN_adaptive(feat_dim, DIM, DIM).to(device)
+        net = MyAGNN(feat_dim, DIM, DIM, MyAGNNlayer_adaptive).to(device)
         net.eval()
         with torch.no_grad():
             bench(net=net, net_params=(features, adj_, *params), tag="3-myagnn_adaptive", nvprof=False, repeat=repeat, memory=True, log=log)
         del params, adj, net
+
+    @empty_cache
+    def run_myagnn_csr(dataset, features):
+        adj, node_num, adj_ = None, None, None
+        if USE_DGL_DATASET:
+            u, v = dataset.edges()
+            node_num = dataset.num_nodes()
+            adj = torch.vstack([u, v]).type(torch.IntTensor)
+            adj_ = torch.hstack([u, v]).type(torch.LongTensor).reshape(2, -1)
+        else:
+            adj = torch.IntTensor(dataset.edge_index).contiguous()
+            node_num = dataset.num_nodes.item(0)
+        self = torch.vstack([torch.arange(0, node_num).type(torch.IntTensor)] * 2).to(device)
+        adj = torch.unique(torch.hstack([self, adj.to(device)]).transpose(0,1), dim=0).transpose(0,1).contiguous()
+        params = mygraph.process_CSR(adj.to(device), node_num)
+        net = MyAGNN(feat_dim, DIM, DIM, MyAGNNlayer_csr).to(device)
+        net.eval()
+        with torch.no_grad():
+            bench(net=net, net_params=(features, adj_, *params), tag="3-myagnn_csr", nvprof=False, repeat=repeat, memory=True, log=log)
+        del params, adj, net
+
     # run_pyg(dataset, features)
     # run_tcgnn(dataset, features)
     # run_mygraph(dataset, features)
     # run_dgl(dataset, features)
     # run_sputnik(dataset, features)
-    # run_udf(dataset, features)
+    # # run_udf(dataset, features)
     # run_myagnn_new(dataset, features)
-    run_myagnn_adaptive(dataset, features)
+    run_myagnn_csr(dataset, features)
+    # run_myagnn_adaptive(dataset, features)
 
     return log
 

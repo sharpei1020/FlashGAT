@@ -4,6 +4,7 @@
 #include <cuda_runtime.h>
 
 #define FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
+#define FLOAT2(pointer) (reinterpret_cast<float2*>(&(pointer))[0])
 
 __device__ static inline void scale_sum(float *output, float *input, float scale, int size)
 {
@@ -96,6 +97,15 @@ at::Tensor GAT_short(
     int out_feats,
     int block_high,
     int block_width
+);
+
+at::Tensor GAT_CSR(
+    at::Tensor feature,
+    at::Tensor lin_weight,
+    at::Tensor alpha_i,
+    at::Tensor alpha_j,
+    at::Tensor row_offset,
+    at::Tensor index
 );
 
 at::Tensor sputnik_GAT(
