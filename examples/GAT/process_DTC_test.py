@@ -58,7 +58,15 @@ def torchcore_process_DTC_short_mask(g, block_high, block_width, node_num):
         SparseAToX_part[:len(rowAtoX_colid)] = rowAtoX_colid
         SparseAToX.append(SparseAToX_part)
         for k in range(rowblock_len):
-            BitMask_col_elem = torch.zeros((block_high//8), dtype=torch.uint8)
+            BitMask_col_elem = None
+            n = 8 // block_high
+            if block_high >= 8:
+                BitMask_col_elem = torch.zeros((block_high//8), dtype=torch.uint8)
+            else:
+                if ((k+RowWindowOffset[-2])&(n-1)) == 0:
+                    BitMask_col_elem = torch.zeros((1), dtype=torch.uint8)
+                else:
+                    BitMask_col_elem = BitMask_col[-1]
             block_colmask = torch.zeros((block_high), dtype=torch.bool)
             for l in range(block_width):
                 if k * block_width + l < len(rowAtoX_colid):
@@ -68,10 +76,22 @@ def torchcore_process_DTC_short_mask(g, block_high, block_width, node_num):
             block_rowmask = torch.zeros((len(rowid)*(block_width//8)), dtype=torch.uint8).reshape((-1, (block_width//8)))
             for l in range(len(rowid)):
                 # cuda数据字节是小端存储
-                BitMask_col_elem[rowid[l]//8] += (2 ** (rowid[l]%8))
+                if block_high >= 8:
+                    BitMask_col_elem[rowid[l]//8] += (2 ** (rowid[l]%8))
+                else:
+                    if ((k+RowWindowOffset[-2])&(n-1)) == 0:
+                        BitMask_col_elem += (2 ** (rowid[l]))
+                    else:
+                        BitMask_col_elem += (2 ** (rowid[l]+block_high*((k+RowWindowOffset[-2])&(n-1))))
             for l in range(min(block_width, len(rowAtoX_colid) - k * block_width)):
                 block_rowmask[:, l//8] += g[i * block_high + rowid, rowAtoX_colid[k * block_width + l]] * (2 ** (l % 8))
-            BitMask_col.append(BitMask_col_elem)
+            if block_high >= 8:
+                BitMask_col.append(BitMask_col_elem)
+            else:
+                if ((k+RowWindowOffset[-2])&(n-1)) == 0:
+                    BitMask_col.append(BitMask_col_elem)
+                else:
+                    BitMask_col[-1] = BitMask_col_elem
             BitMask_row.append(block_rowmask.reshape((-1)))
     RowWindowOffset = torch.Tensor(RowWindowOffset).to("cuda")
     BitMask_RowOffset = torch.Tensor(BitMask_RowOffset).to("cuda")
@@ -80,9 +100,9 @@ def torchcore_process_DTC_short_mask(g, block_high, block_width, node_num):
     SparseAToX = torch.cat(SparseAToX).to("cuda")
     return RowWindowOffset, BitMask_RowOffset, BitMask_col, BitMask_row, SparseAToX
 
-RowWindowOffset_test, BitMask_RowOffset_test, BitMask_col_test, BitMask_row_test, SparseAToX_test = torchcore_process_DTC_short_mask(g, 8, 16, 500)
-RowWindowOffset, BitMask_RowOffset, BitMask_col, BitMask_row, SparseAToX = mygraph.process_DTC_short_mask(adj.to("cuda"), 8, 16, 500, False)
-# print(RowWindowOffset_test, RowWindowOffset)
+RowWindowOffset_test, BitMask_RowOffset_test, BitMask_col_test, BitMask_row_test, SparseAToX_test = torchcore_process_DTC_short_mask(g, 4, 8, 500)
+RowWindowOffset, BitMask_RowOffset, BitMask_col, BitMask_row, SparseAToX = mygraph.process_DTC_short_mask(adj.to("cuda"), 4, 8, 500, False)
+# print(RowWindowOffset_test[-1], RowWindowOffset[-1])
 condition_out = torch.all(torch.abs(RowWindowOffset_test - RowWindowOffset) < 1e-5, dim=-1).cpu()
 print(condition_out)
 # print(SparseAToX_test, SparseAToX)
@@ -92,10 +112,9 @@ print(condition_out)
 # print(BitMask_RowOffset_test, BitMask_RowOffset)
 condition_out = torch.all(torch.abs(BitMask_RowOffset_test - BitMask_RowOffset) < 1e-5, dim=-1).cpu()
 print(condition_out)
-# print(BitMask_col_test, BitMask_col)
+print(BitMask_col_test, BitMask_col)
 condition_out = torch.all(torch.abs(BitMask_col_test - BitMask_col) < 1e-5, dim=-1).cpu()
 print(condition_out)
-print(BitMask_row_test, BitMask_row)
 condition_out = torch.all(torch.abs(BitMask_row_test - BitMask_row) < 1e-5, dim=-1).cpu()
 print(condition_out)
 # print(torch.nonzero(~condition_out))

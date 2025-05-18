@@ -9,6 +9,7 @@ import math
 import time 
 import os
 
+import torch.utils.dlpack
 from tqdm.std import tqdm
 import TCGNN
 from AGNN_PyG import AGNN_PyG
@@ -25,11 +26,13 @@ from torch_sparse import SparseTensor
 from graphiler.utils import init_log, load_data, setup, empty_cache, bench
 import torch.nn.functional as F
 from torch_geometric.utils import softmax
+from tvm.script import tir as T
+import tvm
 
 n_heads = 1
 device = setup()
 
-USE_DGL_DATASET = True
+USE_DGL_DATASET = False
 
 # BREAK_FLAG = 2
 
@@ -131,22 +134,6 @@ class AGNNConvLayer(torch.nn.Module):
         edges: the CSR edge list of the graph, shape: [edge, 1].
         partitioin: for the graph with the part-based optimziation.
         '''
-        
-        # class Container(torch.nn.Module):
-        #     def __init__(self, mydata):
-        #         super(Container, self).__init__()
-        #         for key, value in mydata.items():
-        #             self.register_buffer(key, value)
-
-        # mydata = {"x": X, "row_pointers": row_pointers, "column_index": column_index, 
-        #           "blockPartition": blockPartition, "edgeToColumn": edgeToColumn, "edgeToRow": edgeToRow,
-        #           "attention_w": self.attention_w}
-        # # container = torch.jit.script(Container(mydata))
-        # # torch.jit.save(container, f"TC_data.pt")
-        # print(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, self.attention_w)
-        # import os
-        # os._exit(0)
-
         return TCGNNFunction_AGNN.apply(X, self.weights, self.attention_w, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, orign)
 
 
@@ -168,6 +155,110 @@ class TC_AGNN(torch.nn.Module):
             X = self.relu(Gconv(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, self.orign))
         X = self.lin2(X, row_pointers, column_index, blockPartition, edgeToColumn, edgeToRow, self.orign) if self.orign else self.lin2(X)
         return X
+
+from sparsetir_sddmm.bench_sddmm import get_opt_sddmm
+from sparsetir_spmm.bench_spmm import get_opt_spmm
+
+class AGNNConvLayer_TIR(torch.nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(AGNNConvLayer_TIR, self).__init__()
+        self.dim = input_dim   
+        self.sddmm = None 
+        self.spmm = None 
+        self.col_part_config = {
+            "arxiv": 1,
+            "proteins": 8,
+            "pubmed": 1,
+            "citeseer": 1,
+            "cora": 1,
+            "ppi": 16,
+            "reddit": 8,
+            "products": 16,
+        } 
+        self.bucketing_config = {
+            "arxiv": [1, 2, 4, 8, 16, 32],
+            "proteins": [1, 2, 4, 8, 16, 32, 64, 128, 256],
+            "pubmed": [1, 2, 4, 8, 16, 32],
+            "citeseer": [1, 2, 4],
+            "cora": [1, 2, 4],
+            "ppi": [1, 2, 4, 8, 16, 32],
+            "products": [1, 2, 4, 8, 16, 32],
+            "reddit": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+        }
+        self.indices_nd = None
+        self.indices_nd = None
+        self.mid_nd = None
+        self.c_nd = None
+        self.args = []
+
+
+    def prepare_process(self, g, tx: int, ty: int, 
+                        vec_size: int, group_size: int, dataname: str):
+        m, n, nnz, indptr, indices = None, None, None, None, None
+        indptr0, indices0 = None, None
+        if USE_DGL_DATASET:
+            indptr, indices, _ = g.adj_tensors("csr")
+            indptr0, indices0, _ = g.adj_tensors("csc")
+            indptr = indptr.type(torch.IntTensor)
+            indices = indices.type(torch.IntTensor)
+            m = g.num_src_nodes()
+            n = g.num_dst_nodes()
+            nnz = g.number_of_edges()
+        else:
+            graph = dgl.graph(('csr', (g.row_pointers.to(torch.int64), 
+                    g.column_index.to(torch.int64), [])), 
+                    num_nodes=g.num_nodes)
+            indptr = g.row_pointers
+            indices = g.column_index
+            indptr0, indices0, _ = graph.adj_tensors("csc")
+            m = g.num_nodes.item()
+            n = m
+            nnz = g.num_edges
+        self.sddmm = get_opt_sddmm(m, n, nnz, self.dim, tx, ty, vec_size, group_size)
+        self.spmm = get_opt_spmm(indptr0, indices0, m, n, nnz, self.dim, 
+                                self.bucketing_config[dataname],
+                                coersening_factor=2,
+                                num_col_parts=self.col_part_config[dataname],
+                                args=self.args,
+                                use_implicit_unroll=True)
+        
+        self.indptr_nd = tvm.nd.array(indptr.numpy(), tvm.cuda())
+        self.indices_nd = tvm.nd.array(indices.numpy(), tvm.cuda())
+        self.mid_nd = tvm.nd.array(np.zeros((nnz,), np.int32), tvm.cuda())
+        self.c_nd = tvm.nd.array(np.zeros((nnz,), np.float32), tvm.cuda())
+
+    def forward(self, x):
+        x_norm = F.normalize(x, 2, -1)
+        a_nd = tvm.nd.from_dlpack(torch.utils.dlpack.to_dlpack(x_norm.view(-1)))
+        v_nd = tvm.nd.from_dlpack(torch.utils.dlpack.to_dlpack(x.view(-1)))
+        o_nd = tvm.nd.array(np.zeros((x.size(0)* x.size(1),), np.float32), tvm.cuda())
+        self.sddmm(a_nd, a_nd, self.c_nd, self.indptr_nd, self.indices_nd, self.mid_nd)
+        args = [v_nd, o_nd] + self.args
+        self.spmm(*args)
+        return torch.from_dlpack(o_nd).reshape((-1, self.dim))
+                
+class Sparse_TIR_AGNN(torch.nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(Sparse_TIR_AGNN, self).__init__()
+        self.lin1 = nn.Linear(input_dim, hidden_dim)
+        self.hidden_layers = nn.ModuleList()
+        for _ in range(4):
+            self.hidden_layers.append(AGNNConvLayer_TIR(hidden_dim, hidden_dim))
+        self.lin2 = nn.Linear(hidden_dim, output_dim)
+        self.relu = nn.ReLU(True)
+
+    def prepare(self, g: dgl.DGLGraph, tx: int, ty: int, 
+                vec_size: int, group_size: int, dataname: str):
+        for i in range(4):
+            self.hidden_layers[i].prepare_process(g, tx, ty, vec_size, group_size, dataname)
+
+    def forward(self, X):
+        X = self.relu(self.lin1(X))
+        for Gconv in self.hidden_layers:
+            X = self.relu(Gconv(X))
+        X = self.lin2(X)
+        return X
+
 
 DIM = 32
 
@@ -517,6 +608,16 @@ def profile(dataset_name, feat_dim, repeat=1000):
             bench(net=net, net_params=(features, adj_, *params), tag="3-myagnn_csr", nvprof=False, repeat=repeat, memory=True, log=log)
         del params, adj, net
 
+    @empty_cache
+    def run_sparsetir(dataset, feature):
+        net = Sparse_TIR_AGNN(feat_dim, DIM, DIM).to(device)
+        net.prepare(dataset, 8, 8, 4, 4, dataset_name)
+        net.eval()
+        with torch.no_grad():
+            bench(net=net, net_params=(feature,), tag="SparseTIR",
+                  nvprof=False, repeat=repeat, memory=True, log=log)
+        del net
+
     # run_pyg(dataset, features)
     # run_tcgnn(dataset, features)
     # run_mygraph(dataset, features)
@@ -524,8 +625,9 @@ def profile(dataset_name, feat_dim, repeat=1000):
     # run_sputnik(dataset, features)
     # # run_udf(dataset, features)
     # run_myagnn_new(dataset, features)
-    run_myagnn_csr(dataset, features)
+    # run_myagnn_csr(dataset, features)
     # run_myagnn_adaptive(dataset, features)
+    run_sparsetir(dataset, features)
 
     return log
 
